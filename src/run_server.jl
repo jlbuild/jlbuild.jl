@@ -1,7 +1,4 @@
 include("jlbuild.jl")
-include("secret.jl")
-include("buildbot.jl")
-
 
 build_queue = Dict{JLBuildCommand, Vector{BuildbotJob}}()
 function queue_build(cmd::JLBuildCommand; login_retry=false)
@@ -62,6 +59,8 @@ function callback(event::GitHub.WebhookEvent)
     return HttpCommon.Response(202, "I gotcha boss")
 end
 
+# Start by logging into the buildbot
+buildbot_login()
 
 auth = GitHub.authenticate(GITHUB_AUTH)
 repos = ["JuliaLang/julia", "jlbuild/jlbuild.jl"]

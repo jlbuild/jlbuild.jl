@@ -1,17 +1,12 @@
 import GitHub, HttpCommon
-import Base: ==
+
+# For now, test with secret.jl, but later move to environment variables or similar
+include("secret.jl")
 
 include("logging.jl")
+include("models.jl")
+include("buildbot.jl")
 
-immutable JLBuildCommand
-    gitsha::String
-    code::String
-end
-JLBuildCommand(gitsha::AbstractString) = JLBuildCommand(gitsha, "")
-
-function ==(x::JLBuildCommand, y::JLBuildCommand)
-    return x.gitsha == y.gitsha && x.code == y.code
-end
 
 function get_julia_repo()
     # We maintain a julia repo in ../deps
@@ -35,6 +30,18 @@ function update_julia_repo()
 
     log("Julia checkout updated.")
     return repo
+end
+
+function normalize_gitsha(gitsha::AbstractString)
+    # First, lookup this gitsha in the repo
+    repo = get_julia_repo()
+    git_commit = LibGit2.get(LibGit2.GitCommit, repo, gitsha)
+
+    if git_commit === nothing
+        throw(ArgumentError("gitsha $gitsha was not found in the repository"))
+    end
+
+    return hex(LibGit2.Oid(git_commit))
 end
 
 function verify_gitsha(cmd::JLBuildCommand; auto_update::Bool = true)

@@ -1,5 +1,5 @@
 using Base.Test
-include("jlbuild.jl")
+include("../src/jlbuild.jl")
 
 # First, test that we are able to probe gitshas properly
 test_gitsha = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
