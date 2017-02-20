@@ -53,7 +53,7 @@ $cmd_test_code
     @test isempty(parse_commands("\nlololol\nkekeke @jlbuild $test_gitsha"))
     @test [c.gitsha for c in parse_commands(long_gitsha_test)] == long_gitshas
     @test parse_commands(cmd_test) == [
-        JLBuildCommand("12345678"),
+        JLBuildCommand("12345678", ""),
         JLBuildCommand("1a2b3c4d", cmd_test_code)
     ]
 end

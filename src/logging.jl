@@ -18,28 +18,23 @@ function log(x)
 end
 
 function log(msg::AbstractString)
-    # If a multiline message is sent in for logging, log each line one at a time
-    msg_lines = filter(x -> !isempty(x), split(msg, "\n"))
-    if length(msg_lines) > 1
-        for line in msg_lines
-            log(line)
-        end
-        return
-    end
     global logfile
     const CSI = Terminals.CSI
+    const date_color = Base.text_colors[:cyan]
+    const normal_color = Base.text_colors[:normal]
     datestr = Dates.format(now(), "[dd u yyyy HH:MM:SS.sss]: ")
-    logwrite("\r$(CSI)0K")
+
+    # Only write the clear line/color stuff out to STDOUT
+    write(STDOUT, "\r$(CSI)0K$(date_color)")
     logwrite(datestr)
+    write(STDOUT, normal_color)
 
     splitlines = split(msg, "\n")
-    logwrite(splitlines[1])
-    logwrite("\n")
+    logwrite(splitlines[1] * "\n")
     for line in splitlines[2:end]
-        logwrite(" "^strwidth(datestr))
-        logwrite(line)
-        logwrite("\n")
+        logwrite(" "^(strwidth(datestr)-2) * "> " * line * "\n")
     end
+
     flush(STDOUT)
     flush(logfile)
 end

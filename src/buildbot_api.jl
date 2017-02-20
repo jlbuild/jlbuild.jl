@@ -1,13 +1,12 @@
-using HTTP
-using JSON
 import Base: showerror
 
+# Common buildbot things
 const buildbot_base = "https://buildtest.e.ip.saba.us"
 const download_base = "https://julialang.s3.amazonaws.com/julianightlies_test/bin/latest"
 const client = HTTP.Client()
 type BuildbotLoginError <: Exception end
 function showerror(io::IO, e::BuildbotLoginError)
-    print(io, "Logging in to $buildbot_base didn't work")
+    print(io, "Access denied from $buildbot_base/auth/login")
 end
 
 type HTTPError <: Exception
@@ -19,6 +18,7 @@ end
 function showerror(io::IO, e::HTTPError)
     print(io, "$(e.method) $(e.url) returned $(e.code)")
 end
+
 
 # This get's the given url and returns it, or throws an error
 function get_or_die(url, login_retry=false; kwargs...)
@@ -41,13 +41,15 @@ end
 
 # This is how we authenticate to buildbot through GitHub
 function buildbot_login()
-    params = Dict("token" => GITHUB_AUTH)
+    global GITHUB_AUTH_TOKEN
+    params = Dict("token" => GITHUB_AUTH_TOKEN)
+    log("Authenticating to buildbot...")
     get_or_die("$buildbot_base/auth/login", true; query=params)
     return nothing
 end
 
-julia_builder_ids = Dict{Int64,String}()
-function list_forceschedulers()
+const julia_builder_ids = Dict{Int64,String}()
+function list_forceschedulers!()
     global julia_builder_ids
 
     # Get the force_julia_package builder names
@@ -67,74 +69,24 @@ function list_forceschedulers()
     return nothing
 end
 
-# This describes a single buildbot job.
-immutable BuildbotJob
-    gitsha::String
-    builder_id::Int64
-    job_id::Int64
-end
 
-function name(job::BuildbotJob)
-    global julia_builder_ids
-    return julia_builder_ids[job.builder_id]
-end
+const force_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
+"""
+`submit_buildcommand!(cmd::JLBuildCommand)`
 
-function buildbot_job_url(job::BuildbotJob)
-    return "$buildbot_base/#/builders/$(job.builder_id)/builds/$(job.job_id)"
-end
+Given a `JLBuildCommand`, submit it to the buildbot and create a bunch of job
+objects tracking the state of each builder's work.  These will be stored within
+`cmd.jobs`.
 
-function build_download_url(data)
-    props = Dict(k=>data["properties"][k][1] for k in keys(data["properties"]))
-    println(props)
+If `cmd.jobs` already exists, it will be heartlessly overwritten with no regard
+for the jobs that already existed.
+"""
+function submit_buildcommand!(cmd::JLBuildCommand)
+    global force_url
 
-    os = props["os_name"]
-    up_arch = props["up_arch"]
-    filename = props["upload_filename"]
-    return "$download_base/$os/$up_arch/$filename"
-end
-
-function status(job::BuildbotJob)
-    url = "$buildbot_base/api/v2/builders/$(job.builder_id)/builds/$(job.job_id)"
-    try
-        res = get_or_die(url; query=Dict("property" => "*"))
-
-        data = JSON.parse(readstring(res.body))["builds"][1]
-        download_url = ""
-        if data["complete"]
-            status = "complete"
-            # Grab download url from the properties
-            download_url = build_download_url(data)
-        else
-            status = "building"
-        end
-
-        return Dict(
-            "status" => status,
-            "build_url" => buildbot_job_url(job),
-            "download_url" => download_url,
-            "start_time" => data["started_at"],
-        )
-    catch e
-        if typeof(e) <: HTTPError && e.code == 404
-            return Dict(
-                "status" => "pending",
-                "url" => "",
-                "start_time" => 0,
-            )
-        else
-            rethrow(e)
-        end
-    end
-end
-
-# Revision goes in, list of buildbot jobs come out
-function start_build(revision)
-    buildbot_login()
-
-    const force_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
-    if isempty(julia_builder_ids)
-        list_forceschedulers()
-    end
+    # initialize the list of builder ids we're interested in every time.  We
+    # don't want to fall behind the times if the buildbot topology changes.
+    list_forceschedulers!()
 
     job_list = BuildbotJob[]
     for builder_id in keys(julia_builder_ids)
@@ -143,15 +95,21 @@ function start_build(revision)
             "method" => "force",
             "jsonrpc" => "2.0",
             "params" => Dict(
-                "revision" => revision,
+                "revision" => cmd.gitsha,
                 "builderid" => builder_id,
             ),
         ))
 
         res = HTTP.post(client, force_url; body=data)
         job_id = JSON.parse(readstring(res.body))["result"][1]
-        gitsha = normalize_gitsha(revision)
-        push!(job_list, BuildbotJob(gitsha, builder_id, job_id))
+        gitsha = normalize_gitsha(cmd.gitsha)
+        push!(job_list, BuildbotJob(cmd.gitsha, builder_id, job_id, false))
     end
-    return job_list
+
+    cmd.jobs = job_list
+    cmd.submitted = true
+
+    # Save out this command after updating it
+    dbsave(cmd)
+    return cmd
 end
