@@ -2,7 +2,7 @@ import Base: showerror
 
 # Common buildbot things
 const buildbot_base = "https://buildtest.e.ip.saba.us"
-const download_base = "https://julialang.s3.amazonaws.com/julianightlies_test/bin/latest"
+const download_base = "https://julialang.s3.amazonaws.com/julianightlies/test/bin"
 const client = HTTP.Client()
 type BuildbotLoginError <: Exception end
 function showerror(io::IO, e::BuildbotLoginError)
@@ -21,17 +21,17 @@ end
 
 
 # This get's the given url and returns it, or throws an error
-function get_or_die(url, login_retry=false; kwargs...)
+function get_or_die(url, login_retry=0; kwargs...)
     global client
     res = HTTP.get(client, url; kwargs...)
     if res.status != 200
         # Always login and retry once if we're unauthorized
         if res.status == 403
-            if login_retry
+            if login_retry > 3
                 throw(BuildbotLoginError())
             end
             buildbot_login()
-            return get_or_die(url, true; kwargs...)
+            return get_or_die(url, login_retry + 1; kwargs...)
         end
         url_short = url[length(buildbot_base)+1:end]
         throw(HTTPError("GET", url_short, res.status))
@@ -44,7 +44,7 @@ function buildbot_login()
     global GITHUB_AUTH_TOKEN
     params = Dict("token" => GITHUB_AUTH_TOKEN)
     log("Authenticating to buildbot...")
-    get_or_die("$buildbot_base/auth/login", true; query=params)
+    get_or_die("$buildbot_base/auth/login"; query=params)
     return nothing
 end
 
@@ -62,7 +62,7 @@ function list_forceschedulers!()
     data = JSON.parse(readstring(res.body))["builders"]
     empty!(julia_builder_ids)
     for z in data
-        if z["name"] in builder_names
+        if z["name"] in builder_names && startswith(z["name"], "package_")
             julia_builder_ids[z["builderid"]] = z["name"]
         end
     end
@@ -101,9 +101,11 @@ function submit_buildcommand!(cmd::JLBuildCommand)
         ))
 
         res = HTTP.post(client, force_url; body=data)
-        job_id = JSON.parse(readstring(res.body))["result"][1]
+        buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
         gitsha = normalize_gitsha(cmd.gitsha)
-        push!(job_list, BuildbotJob(cmd.gitsha, builder_id, job_id, false))
+        job = BuildbotJob(gitsha, builder_id, buildrequest_id)
+        push!(job_list, job)
+        dbsave(job)
     end
 
     cmd.jobs = job_list

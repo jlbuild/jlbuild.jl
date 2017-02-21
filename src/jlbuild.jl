@@ -3,11 +3,11 @@ module jlbuild
 import GitHub
 using HTTP, JSON
 
-export run_server, JLBuildCommand, BuildbotJob
+export run_server, JLBuildCommand, BuildbotJob, dbload, dbsave
 
 include("logging.jl")
 include("models/buildbotjob.jl")
-include("models/buildcommand.jl")
+include("models/jlbuildcommand.jl")
 include("buildbot_api.jl")
 include("parsing.jl")
 include("server.jl")

@@ -1,49 +1,103 @@
 using HttpCommon
 
+run_event_loop = true
 function build_eventloop()
-    # We run forever
-    while true
-        # Sleep 15 seconds each iteration
-        sleep(15)
+    global run_event_loop
 
+    last_check = Dict{String,Float64}()
+
+    # We run forever, or until someone falsifies run_event_loop
+    while run_event_loop
         # Find any JLBC's that haven't been submitted to the buildbot at all
-        new_jobs = dbload(JLBuildCommand; submitted=false)
-        for idx in 1:length(new_jobs)
-            log("Submitting build $(new_jobs[idx])")
-            submit_buildcommand!(new_jobs[idx])
+        new_cmds = dbload(JLBuildCommand; submitted=false)
+        for idx in 1:length(new_cmds)
+            log("Submitting build $(new_cmds[idx])")
+            submit_buildcommand!(new_cmds[idx])
         end
 
         # Find any BuildbotJob's that aren't completed
         pending_jobs = dbload(BuildbotJob; done=false)
-        for idx in 1:length(pending_jobs)
-            log("Pending job: $(pending_jobs[idx])")
+        unique_gitshas = unique([j.gitsha for j in pending_jobs])
+        for gitsha in unique_gitshas
+            # Only hit the buildbot/update comments every X seconds per gitsha
+            if get(last_check, gitsha, 0) + 5*60 < time()
+                cmd = dbload(JLBuildCommand; gitsha=gitsha)[1]
+                log("Updating comment $(comment_url(cmd))")
+                update_comment(cmd)
+                last_check[gitsha] = time()
+            end
         end
+
+        # Sleep a bit each iteration, so we're not a huge CPU hog
+        sleep(5)
     end
 end
 
-function queue_build(cmd::JLBuildCommand; login_retry=false)
-    try
-        submit_buildcommand!(cmd)
-        dbsave(cmd)
-    catch
-        log("Unable to submit to buildbot!  Hopefully I'll retry eventually...")
-    end
+function comment_url(cmd::JLBuildCommand)
+    return string(get(GitHub.comment(cmd.repo_name, cmd.comment_id).html_url))
 end
 
-function reply_comment(cmd::JLBuildCommand, msg::AbstractString)
+function comment!(cmd::JLBuildCommand, msg::AbstractString)
     global github_auth
-    params = Dict("body" => strip(msg))
-    GitHub.create_comment( GitHub.repo(cmd.repo_name), cmd.comment_place,
-                           cmd.comment_type, auth=github_auth, params=params)
+    if cmd.comment_id == 0
+        comment = GitHub.create_comment(
+            GitHub.repo(cmd.repo_name),
+            cmd.comment_place,
+            cmd.comment_type,
+            auth = github_auth,
+            params = Dict("body" => strip(msg))
+        )
+        cmd.comment_id = get(comment.id)
+    else
+        GitHub.edit_comment(
+            GitHub.repo(cmd.repo_name),
+            cmd.comment_id,
+            cmd.comment_type,
+            auth = github_auth,
+            params = Dict("body" => strip(msg))
+        )
+    end
 end
 
-# function reply_comment(event::GitHub.WebhookEvent, msg::AbstractString)
-#     global github_auth
-#     comment_place = get_comment_place(event)
-#     comment_type = get_comment_type(event)
-#     GitHub.create_comment( event.repository, comment_place, comment_type;
-#                            auth=github_auth, params = Dict("body" => strip(msg)))
-# end
+function update_comment(cmd::JLBuildCommand)
+    if !cmd.submitted
+        msg = "Got it, building $(cmd.gitsha)\n\n" *
+              "I will edit this comment as the build jobs complete."
+        comment!(cmd, msg)
+    else
+        msg = "Build of $(cmd.gitsha) status:"
+        for job in cmd.jobs
+            name = builder_name(job)
+            job_status = status(job)
+
+            job_msg = "* $name: <a href=\"$(job_status["build_url"])\">$(job_status["status"])"
+            if job_status["status"] == "pending"
+                job_msg = job_msg * "</a>"
+            elseif job_status["status"] == "building"
+                start_time = Libc.strftime(job_status["start_time"])
+                job_msg = job_msg * "</a>, started at $start_time"
+            elseif job_status["status"] == "complete"
+                if job_status["result"] == 0
+                    dlurl = job_status["download_url"]
+                    job_msg = job_msg * " with a build artifact</a>! " *
+                                        "<a href=\"$dlurl\">Download link.</a>"
+                else
+                    job_msg = job_msg * " with errors</a>."
+                end
+
+                # Make sure to flip the job.done bit here so these get out of
+                # the pool of jobs that get reprocessed
+                job.done = true
+                dbsave(job)
+            end
+
+            msg = msg * "\n\n" * job_msg
+        end
+
+        comment!(cmd, msg)
+    end
+
+end
 
 event_ = nothing
 function callback(event::GitHub.WebhookEvent)
@@ -67,15 +121,10 @@ function callback(event::GitHub.WebhookEvent)
     end
 
     @schedule begin
+        # Save each cmd to the db
         for cmd in commands
-            # Save them to the DB.
+            update_comment(cmd)
             dbsave(cmd)
-
-            reply_comment(cmd, """
-                Got it, building $(cmd.gitsha)
-
-                I will edit this comment as the build jobs complete.
-            """)
         end
     end
 

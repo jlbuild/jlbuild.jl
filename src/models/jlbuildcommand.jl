@@ -6,6 +6,7 @@ type JLBuildCommand
     code::String
     submitted::Bool
     repo_name::String
+    comment_id::Int64
     comment_place::String
     comment_type::Symbol
 
@@ -14,16 +15,16 @@ type JLBuildCommand
 end
 
 function JLBuildCommand(gitsha::AbstractString, code::NAtype)
-    return JLBuildCommand(gitsha, "", false, "", "unknown", :unknown, BuildbotJob[])
+    return JLBuildCommand(gitsha, "", false, "", 0, "unknown", :unknown, BuildbotJob[])
 end
 
 function JLBuildCommand(gitsha::AbstractString, code::AbstractString)
-    return JLBuildCommand(gitsha, code, false, "", "unknown", :unknown, BuildbotJob[])
+    return JLBuildCommand(gitsha, code, false, "", 0, "unknown", :unknown, BuildbotJob[])
 end
 
 function JLBuildCommand(gitsha::AbstractString, code::AbstractString, submitted::Bool,
-                        repo_name::String, comment_place::String, comment_type::Symbol)
-    return JLBuildCommand(gitsha, code, submitted, repo_name, comment_place, comment_type, BuildbotJob[])
+                        repo_name::String, comment_id::Int64, comment_place::String, comment_type::Symbol)
+    return JLBuildCommand(gitsha, code, submitted, repo_name, comment_id, comment_place, comment_type, BuildbotJob[])
 end
 
 function ==(x::JLBuildCommand, y::JLBuildCommand)

@@ -18,6 +18,7 @@ function create_schema(::Type{JLBuildCommand})
         code MEDIUMTEXT NOT NULL,
         submitted BOOLEAN NOT NULL,
         repo_name TEXT NOT NULL,
+        comment_id INT NOT NULL,
         comment_place TEXT NOT NULL,
         comment_type TEXT NOT NULL,
         PRIMARY KEY (gitsha)
@@ -30,6 +31,7 @@ function sql_fields(::Type{JLBuildCommand})
         :code,
         :submitted,
         :repo_name,
+        :comment_id,
         :comment_place,
         :comment_type
     )
@@ -42,15 +44,15 @@ function create_schema(::Type{BuildbotJob})
     return """
         gitsha CHAR(40) NOT NULL,
         builder_id INT NOT NULL,
-        job_id INT NOT NULL,
+        buildrequest_id INT NOT NULL,
         done BOOLEAN NOT NULL,
-        PRIMARY KEY (gitsha, builder_id, job_id),
+        PRIMARY KEY (gitsha, builder_id, buildrequest_id),
         CONSTRAINT fk_cmd FOREIGN KEY (gitsha) REFERENCES JLBuildCommand(gitsha)
     """
 end
 
 function sql_fields(::Type{BuildbotJob})
-    return (:gitsha, :builder_id, :job_id, :done)
+    return (:gitsha, :builder_id, :buildrequest_id, :done)
 end
 
 function table_exists(table_name::AbstractString)
@@ -97,32 +99,29 @@ dbescape(x) = dbescape(string(x))
 String(x::NAtype) = ""
 
 
-function dbsave{T}(x::T; verbose=false)
+function dbsave{T}(x::T)
     global con
     fields = sql_fields(T)
     values = collect(getfield(x, Symbol(f)) for f in fields)
     values = ("'$(dbescape(value))'" for value in values)
     cmd = strip("""
-        REPLACE INTO $T ($(join(fields, ", "))) VALUES ($(join(values, ", ")))
+        SET FOREIGN_KEY_CHECKS=0;
+        REPLACE INTO $T ($(join(fields, ", "))) VALUES ($(join(values, ", ")));
+        SET FOREIGN_KEY_CHECKS=1;
     """)
-    if verbose
-        log("dbsave SQL: $cmd")
-    end
     return mysql_execute(con, cmd)
 end
 
-function dbload{T}(::Type{T}; verbose=false, kwargs...)
+function dbload{T}(::Type{T}; kwargs...)
     global con
     fields = sql_fields(T)
     where_list = ["$(kv[1]) = '$(dbescape(kv[2]))'" for kv in kwargs]
-    cmd = "SELECT $(join(fields, ", ")) FROM $T WHERE $(join(where_list, ", "))"
-    if verbose
-        log("dbload SQL: $cmd")
+
+    cmd = "SELECT $(join(fields, ", ")) FROM $T"
+    if !isempty(where_list)
+        cmd = "$cmd WHERE $(join(where_list, ", "));"
     end
     r = mysql_execute(con, cmd)
-    if verbose
-        log("  result: $r")
-    end
 
     # Collect the results from the SQL query, convert into arguments of the type
     # the constructor will expect, then construct objects from each row of r
@@ -147,11 +146,11 @@ function populate_test_tables()
     global con
     dbsave(JLBuildCommand("123"))
     dbsave(JLBuildCommand("1a2a3a", "this is code"))
-    dbsave(BuildbotJob("123", 1, 2, false))
-    dbsave(BuildbotJob("123", 2, 5, false))
-    dbsave(BuildbotJob("123", 3, 23, true))
-    dbsave(BuildbotJob("123", 4, 1, false))
+    dbsave(BuildbotJob("123", 1, 2))
+    dbsave(BuildbotJob("123", 2, 5))
+    dbsave(BuildbotJob("123", 3, 23))
+    dbsave(BuildbotJob("123", 4, 1))
 
-    dbsave(BuildbotJob("1a2a3a", 42, 17, true))
-    dbsave(BuildbotJob("1a2a3a", 3, 14, true))
+    dbsave(BuildbotJob("1a2a3a", 42, 17))
+    dbsave(BuildbotJob("1a2a3a", 3, 14))
 end
