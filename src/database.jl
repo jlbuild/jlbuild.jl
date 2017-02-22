@@ -21,7 +21,8 @@ function create_schema(::Type{JLBuildCommand})
         comment_id INT NOT NULL,
         comment_place TEXT NOT NULL,
         comment_type TEXT NOT NULL,
-        PRIMARY KEY (gitsha)
+        comment_url TEXT NOT NULL,
+        PRIMARY KEY (gitsha, comment_id)
     """
 end
 
@@ -33,7 +34,8 @@ function sql_fields(::Type{JLBuildCommand})
         :repo_name,
         :comment_id,
         :comment_place,
-        :comment_type
+        :comment_type,
+        :comment_url,
     )
 end
 
@@ -45,14 +47,15 @@ function create_schema(::Type{BuildbotJob})
         gitsha CHAR(40) NOT NULL,
         builder_id INT NOT NULL,
         buildrequest_id INT NOT NULL,
+        comment_id INT NOT NULL,
         done BOOLEAN NOT NULL,
         PRIMARY KEY (gitsha, builder_id, buildrequest_id),
-        CONSTRAINT fk_cmd FOREIGN KEY (gitsha) REFERENCES JLBuildCommand(gitsha)
+        CONSTRAINT fk_cmd FOREIGN KEY (gitsha, comment_id) REFERENCES JLBuildCommand (gitsha, comment_id)
     """
 end
 
 function sql_fields(::Type{BuildbotJob})
-    return (:gitsha, :builder_id, :buildrequest_id, :done)
+    return (:gitsha, :builder_id, :buildrequest_id, :comment_id, :done)
 end
 
 function table_exists(table_name::AbstractString)
@@ -136,21 +139,4 @@ function dbload{T}(::Type{T}; kwargs...)
     end
 
     return result
-end
-
-
-
-
-# This is just here for testing
-function populate_test_tables()
-    global con
-    dbsave(JLBuildCommand("123"))
-    dbsave(JLBuildCommand("1a2a3a", "this is code"))
-    dbsave(BuildbotJob("123", 1, 2))
-    dbsave(BuildbotJob("123", 2, 5))
-    dbsave(BuildbotJob("123", 3, 23))
-    dbsave(BuildbotJob("123", 4, 1))
-
-    dbsave(BuildbotJob("1a2a3a", 42, 17))
-    dbsave(BuildbotJob("1a2a3a", 3, 14))
 end

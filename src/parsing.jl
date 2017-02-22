@@ -151,7 +151,7 @@ function parse_commands(body::AbstractString; default_commit="")
 
         # Only add this guy if he doesn't already exist in the list of commands
         if isempty(filter(x -> x.gitsha == gitsha, commands))
-            push!(commands, JLBuildCommand(gitsha, code_block))
+            push!(commands,JLBuildCommand(normalize_gitsha(gitsha), code_block))
         end
     end
 

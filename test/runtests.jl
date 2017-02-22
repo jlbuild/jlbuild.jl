@@ -1,13 +1,15 @@
 using Base.Test
 include("../src/jlbuild.jl")
+using jlbuild
 
 # First, test that we are able to probe gitshas properly
 test_gitsha = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
 @testset "LibGit2 usage" begin
-    @test verify_gitsha(test_gitsha)
-    @test verify_gitsha(test_gitsha[1:10])
+    @test verify_gitsha(test_gitsha; auto_update=false)
+    @test verify_gitsha(test_gitsha[1:10]; auto_update=false)
+    @test verify_gitsha("master"; auto_update=false)
     @test !verify_gitsha(test_gitsha[1:3]; auto_update=false)
-    @test !verify_gitsha("this is not a gitsha"; auto_update=false)
+    @test !verify_gitsha("this is not a gitsha or branch"; auto_update=false)
 end
 
 long_gitsha_test = """

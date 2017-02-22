@@ -2,8 +2,8 @@
 module jlbuild
 import GitHub
 using HTTP, JSON
-
-export run_server, JLBuildCommand, BuildbotJob, dbload, dbsave
+export run_server, JLBuildCommand, BuildbotJob, dbload, dbsave, verify_gitsha,
+        parse_commands
 
 include("logging.jl")
 include("models/buildbotjob.jl")
@@ -30,13 +30,6 @@ function __init__()
                 error($("Must provide $(join(env_list, ", ")) as environment variables, but $(name) was empty"))
             end
         end
-    end
-
-    # Login to everything, in the background
-    @schedule begin
-        buildbot_login()
-        github_login()
-        db_login()
     end
 end
 end # module jlbuild

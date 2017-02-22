@@ -1,10 +1,29 @@
 using HttpCommon
 
+# Github resource caching
+repo_cache = Dict{String,GitHub.Repo}()
+function get_repo(name::AbstractString)
+    global repo_cache, github_auth
+    if !haskey(repo_cache, name)
+        repo_cache[name] = GitHub.repo(name; auth=github_auth)
+    end
+
+    return repo_cache[name]
+end
+
+commit_cache = Dict{String,GitHub.Commit}()
+function get_commit(gitsha::AbstractString)
+    global commit_cache, github_auth
+    if !haskey(commit_cache, gitsha)
+        commit_cache[gitsha] = GitHub.commit("JuliaLang/julia", gitsha; auth=github_auth)
+    end
+    return commit_cache[gitsha]
+end
+
+
 run_event_loop = true
 function build_eventloop()
     global run_event_loop
-
-    last_check = Dict{String,Float64}()
 
     # We run forever, or until someone falsifies run_event_loop
     while run_event_loop
@@ -19,13 +38,8 @@ function build_eventloop()
         pending_jobs = dbload(BuildbotJob; done=false)
         unique_gitshas = unique([j.gitsha for j in pending_jobs])
         for gitsha in unique_gitshas
-            # Only hit the buildbot/update comments every X seconds per gitsha
-            if get(last_check, gitsha, 0) + 5*60 < time()
-                cmd = dbload(JLBuildCommand; gitsha=gitsha)[1]
-                log("Updating comment $(comment_url(cmd))")
-                update_comment(cmd)
-                last_check[gitsha] = time()
-            end
+            cmd = dbload(JLBuildCommand; gitsha=gitsha)[1]
+            update_comment(cmd)
         end
 
         # Sleep a bit each iteration, so we're not a huge CPU hog
@@ -33,70 +47,98 @@ function build_eventloop()
     end
 end
 
-function comment_url(cmd::JLBuildCommand)
-    return string(get(GitHub.comment(cmd.repo_name, cmd.comment_id).html_url))
-end
-
 function comment!(cmd::JLBuildCommand, msg::AbstractString)
     global github_auth
     if cmd.comment_id == 0
         comment = GitHub.create_comment(
-            GitHub.repo(cmd.repo_name),
+            get_repo(cmd.repo_name),
             cmd.comment_place,
             cmd.comment_type,
             auth = github_auth,
             params = Dict("body" => strip(msg))
         )
         cmd.comment_id = get(comment.id)
+        cmd.comment_url = string(get(comment.html_url))
+        log("Creating comment $(cmd.comment_url)")
     else
         GitHub.edit_comment(
-            GitHub.repo(cmd.repo_name),
+            get_repo(cmd.repo_name),
             cmd.comment_id,
             cmd.comment_type,
             auth = github_auth,
             params = Dict("body" => strip(msg))
         )
+        log("Updating comment $(cmd.comment_url)")
     end
 end
 
+comment_text_cache = Dict{String,String}()
 function update_comment(cmd::JLBuildCommand)
+    global comment_text_cache
+    if !haskey(comment_text_cache, cmd.comment_url)
+        comment_text_cache[cmd.comment_url] = ""
+    end
+
+
+    gitsha_url = get(get_commit(cmd.gitsha).html_url)
     if !cmd.submitted
-        msg = "Got it, building $(cmd.gitsha)\n\n" *
+        msg = "Got it, building $(gitsha_url)\n\n" *
               "I will edit this comment as the build jobs complete."
-        comment!(cmd, msg)
+
+        if comment_text_cache[cmd.comment_url] != msg
+            comment!(cmd, msg)
+            comment_text_cache[cmd.comment_url] = msg
+            dbsave(cmd)
+        end
     else
-        msg = "Build of $(cmd.gitsha) status:"
-        for job in cmd.jobs
+        msg = "## Status of $(gitsha_url) builds:\n\n"
+
+        msg = msg * "| Builder Name | Status | Download | Code Output |\n"
+        msg = msg * "| :----------- | :----: | :------: | :---------: |\n"
+        for job in sort(cmd.jobs, by=j -> builder_name(j))
             name = builder_name(job)
             job_status = status(job)
 
-            job_msg = "* $name: <a href=\"$(job_status["build_url"])\">$(job_status["status"])"
-            if job_status["status"] == "pending"
-                job_msg = job_msg * "</a>"
-            elseif job_status["status"] == "building"
-                start_time = Libc.strftime(job_status["start_time"])
-                job_msg = job_msg * "</a>, started at $start_time"
-            elseif job_status["status"] == "complete"
-                if job_status["result"] == 0
-                    dlurl = job_status["download_url"]
-                    job_msg = job_msg * " with a build artifact</a>! " *
-                                        "<a href=\"$dlurl\">Download link.</a>"
-                else
-                    job_msg = job_msg * " with errors</a>."
-                end
+            # Output name
+            msg = msg * "| [$name]($(builder_url(job))) "
 
+            # Output status
+            jstat = job_status["status"]
+            msg = msg * "| [$jstat]($(uppercase(job_status["build_url"])))"
+
+            if jstat == "building"
+                start_time = Libc.strftime(job_status["start_time"])
+                msg = msg * ", started at $start_time "
+            else
+                msg = msg * " "
+            end
+
+            if jstat == "complete"
+                dl_url = job_status["download_url"]
+                msg = msg * "| [Download]($dl_url)! "
+            else
+                msg = msg * "| N/A "
+            end
+
+            msg = msg * "| N/A "
+
+            if jstat in ["canceled", "complete", "errored"]
                 # Make sure to flip the job.done bit here so these get out of
                 # the pool of jobs that get reprocessed
                 job.done = true
                 dbsave(job)
             end
 
-            msg = msg * "\n\n" * job_msg
+            msg = msg * "|\n"
         end
 
-        comment!(cmd, msg)
-    end
 
+        if comment_text_cache[cmd.comment_url] != msg
+            comment!(cmd, msg)
+            comment_text_cache[cmd.comment_url] = msg
+            dbsave(cmd)
+        end
+    end
 end
 
 event_ = nothing
@@ -124,7 +166,6 @@ function callback(event::GitHub.WebhookEvent)
         # Save each cmd to the db
         for cmd in commands
             update_comment(cmd)
-            dbsave(cmd)
         end
     end
 
@@ -140,6 +181,11 @@ end
 
 function run_server(port=7050)
     global GITHUB_AUTH_TOKEN, GITHUB_WEBHOOK_SECRET, github_auth
+
+    # Login to everything
+    buildbot_login()
+    github_login()
+    db_login()
 
     repos = ["JuliaLang/julia", "jlbuild/jlbuild.jl"]
     events = ["commit_comment","pull_request","pull_request_review_comment","issues","issue_comment"]

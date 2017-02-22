@@ -2,7 +2,7 @@ import Base: showerror
 
 # Common buildbot things
 const buildbot_base = "https://buildtest.e.ip.saba.us"
-const download_base = "https://julialang.s3.amazonaws.com/julianightlies/test/bin"
+const download_base = "https://julianightlies.s3.amazonaws.com"
 const client = HTTP.Client()
 type BuildbotLoginError <: Exception end
 function showerror(io::IO, e::BuildbotLoginError)
@@ -90,20 +90,20 @@ function submit_buildcommand!(cmd::JLBuildCommand)
 
     job_list = BuildbotJob[]
     for builder_id in keys(julia_builder_ids)
+        gitsha = normalize_gitsha(cmd.gitsha)
         data = JSON.json(Dict(
             "id" => 1,
             "method" => "force",
             "jsonrpc" => "2.0",
             "params" => Dict(
-                "revision" => cmd.gitsha,
+                "revision" => gitsha,
                 "builderid" => builder_id,
             ),
         ))
 
         res = HTTP.post(client, force_url; body=data)
         buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
-        gitsha = normalize_gitsha(cmd.gitsha)
-        job = BuildbotJob(gitsha, builder_id, buildrequest_id)
+        job = BuildbotJob(gitsha, builder_id, buildrequest_id, cmd.comment_id)
         push!(job_list, job)
         dbsave(job)
     end
