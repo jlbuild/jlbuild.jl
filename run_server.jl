@@ -2,4 +2,4 @@ include("src/jlbuild.jl")
 using jlbuild
 
 run_server()
-wait()
+wait(jlbuild.event_loop_task)

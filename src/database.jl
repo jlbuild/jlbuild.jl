@@ -5,7 +5,7 @@ db_connection = nothing
 function db_login()
     global db_connection
     log("Authenticating to mysql...")
-    db_connection = mysql_connect("nureha.cs.washington.edu", MYSQL_USER, MYSQL_PASSWORD, "jlbuild")
+    db_connection = mysql_connect("db", MYSQL_USER, MYSQL_PASSWORD, "jlbuild")
 
     # Create our tables if we need to
     create_tables()

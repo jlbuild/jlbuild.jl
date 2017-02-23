@@ -22,7 +22,7 @@ end
 
 
 run_event_loop = true
-function build_eventloop()
+function run_eventloop()
     global run_event_loop
 
     # We run forever, or until someone falsifies run_event_loop
@@ -102,7 +102,7 @@ function update_comment(cmd::JLBuildCommand)
     else
         msg = "## Status of $(gitsha_url) builds:\n\n"
 
-        msg = msg * "| Builder Name | Status | Download | Code Output |\n"
+        msg = msg * "| Builder Name | Build | Download | Code Output |\n"
         msg = msg * "| :----------- | :----: | :------: | :---------: |\n"
         for job in sort(cmd.jobs, by=j -> builder_name(j))
             name = builder_name(job)
@@ -223,5 +223,5 @@ function run_server(port=7050)
     events = ["commit_comment","pull_request","pull_request_review_comment","issues","issue_comment"]
     listener = GitHub.EventListener(callback; events=events, auth=github_auth, secret=GITHUB_WEBHOOK_SECRET, repos=repos)
     github_listener_task = @schedule run(listener, port)
-    event_loop_task = @schedule build_eventloop()
+    event_loop_task = @schedule run_eventloop()
 end
