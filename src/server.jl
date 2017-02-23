@@ -36,14 +36,18 @@ function build_eventloop()
 
         # Find any BuildbotJob's that aren't completed
         pending_jobs = dbload(BuildbotJob; done=false)
-        unique_gitshas = unique([j.gitsha for j in pending_jobs])
-        for gitsha in unique_gitshas
-            cmd = dbload(JLBuildCommand; gitsha=gitsha)[1]
+        cmd_refs = unique([Dict(:gitsha => j.gitsha, :comment_id => j.comment_id) for j in pending_jobs])
+        for cmd_ref in cmd_refs
+            cmd = dbload(JLBuildCommand; cmd_ref...)[1]
             update_comment(cmd)
         end
 
+        # Find any BuildbotJob's that are done running but haven't run code yet
+        pending_jobs = dbload(BuildbotJob; done=true, code_run=false)
+
+
         # Sleep a bit each iteration, so we're not a huge CPU hog
-        sleep(5)
+        sleep(15)
     end
 end
 
@@ -97,15 +101,16 @@ function update_comment(cmd::JLBuildCommand)
         msg = msg * "| :----------- | :----: | :------: | :---------: |\n"
         for job in sort(cmd.jobs, by=j -> builder_name(j))
             name = builder_name(job)
-            job_status = status(job)
+            job_status = build_status(job)
 
             # Output name
             msg = msg * "| [$name]($(builder_url(job))) "
 
             # Output status
             jstat = job_status["status"]
-            msg = msg * "| [$jstat]($(uppercase(job_status["build_url"])))"
+            msg = msg * "| [$(uppercase(jstat))]($(job_status["build_url"]))"
 
+            # Build "status" column
             if jstat == "building"
                 start_time = Libc.strftime(job_status["start_time"])
                 msg = msg * ", started at $start_time "
@@ -113,12 +118,19 @@ function update_comment(cmd::JLBuildCommand)
                 msg = msg * " "
             end
 
+            # Build download column
             if jstat == "complete"
                 dl_url = job_status["download_url"]
-                msg = msg * "| [Download]($dl_url)! "
+                msg = msg * "| [Download]($dl_url) "
             else
                 msg = msg * "| N/A "
             end
+
+            # Build "Code Output" column
+            if jstat == "complete"
+                cstat = code_status(job)
+            end
+
 
             msg = msg * "| N/A "
 
@@ -126,6 +138,12 @@ function update_comment(cmd::JLBuildCommand)
                 # Make sure to flip the job.done bit here so these get out of
                 # the pool of jobs that get reprocessed
                 job.done = true
+
+                # If a job was canceled or errored, say that the code was run
+                # as well, so that we don't keep trying to run its code. :(
+                if jstat in ["canceled", "errored"]
+                    job.code_run = true
+                end
                 dbsave(job)
             end
 
@@ -149,17 +167,20 @@ function callback(event::GitHub.WebhookEvent)
 
     # verify we should be listening to this comment at all
     if !verify_sender(event)
-        return HttpCommon.Response(400, "bad sender")
+        return HttpCommon.Response(202, "bad sender")
     end
 
     # Next, parse out the commands
     commands = parse_commands(event)
 
-    # Filter them on whether they point to valid gitsha's
+    # Filter them on whether they point to valid gitsha's and normalize them
     commands = filter(c -> verify_gitsha(c), commands)
+    for cmd in commands
+        cmd.gitsha = normalize_gitsha(cmd.gitsha)
+    end
 
     if isempty(commands)
-        return HttpCommon.Response(400, "no valid commands")
+        return HttpCommon.Response(202, "no valid commands")
     end
 
     @schedule begin
@@ -179,17 +200,16 @@ function github_login()
     github_auth = GitHub.authenticate(GITHUB_AUTH_TOKEN)
 end
 
+event_loop_task = nothing
+github_listener_task = nothing
 function run_server(port=7050)
     global GITHUB_AUTH_TOKEN, GITHUB_WEBHOOK_SECRET, github_auth
+    global event_loop_task, github_listener_task
 
-    # Login to everything
-    buildbot_login()
     github_login()
-    db_login()
-
     repos = ["JuliaLang/julia", "jlbuild/jlbuild.jl"]
     events = ["commit_comment","pull_request","pull_request_review_comment","issues","issue_comment"]
     listener = GitHub.EventListener(callback; events=events, auth=github_auth, secret=GITHUB_WEBHOOK_SECRET, repos=repos)
-    @schedule run(listener, port)
-    @schedule build_eventloop()
+    github_listener_task = @schedule run(listener, port)
+    event_loop_task = @schedule build_eventloop()
 end

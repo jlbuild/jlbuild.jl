@@ -5,10 +5,12 @@ type BuildbotJob
     buildrequest_id::Int64
     comment_id::Int64
     done::Bool
+    code_run::Bool
+    coderun_buildrequest_id::Int64
 end
 
 function BuildbotJob(gitsha::AbstractString, builder_id::Int64, buildrequest_id::Int64, comment_id::Int64)
-    return BuildbotJob(gitsha, builder_id, buildrequest_id, comment_id, false)
+    return BuildbotJob(gitsha, builder_id, buildrequest_id, comment_id, false, false, 0)
 end
 
 """
@@ -32,17 +34,23 @@ end
 """
 `buildbot_job_url(job::BuildbotJob, data::Dict)`
 
-Return the URL to this buildbot job (if build is pending this throws, so don't.)
+Return the URL to this buildbot job.  This might throw if data["number"] doesn't
+exist, so `try` not to do that.  heh.
 """
-function build_url(job::BuildbotJob, data::Dict)
+function build_url(data::Dict)
     global buildbot_base
-    return "$buildbot_base/#/builders/$(job.builder_id)/builds/$(data["number"])"
+    return "$buildbot_base/#/builders/$(data["builderid"])/builds/$(data["number"])"
+end
+
+function buildrequest_url(buildrequest_id::Int64)
+    global buildbot_base
+    return "$buildbot_base/#/buildrequests/$buildrequest_id"
 end
 
 function buildrequest_url(job::BuildbotJob)
-    global buildbot_base
-    return "$buildbot_base/#/buildrequests/$(job.buildrequest_id)"
+    return buildrequest_url(job.buildrequest_id)
 end
+
 
 """
 `build_download_url(data::Dict)`
@@ -66,17 +74,17 @@ function build_download_url(data::Dict)
 end
 
 """
-`status(job::BuildbotJob)`
+`status(buildrequest_id::Int64)`
 
 Return a dictionary summarizing the status of this buildbot job. Contains useful
-information such as `"status"`, which is one of `"complete"`, `"building"`, or
-`"pending"`. `"build_url"` which points `buildbot_job_url()` if status is not
-`"pending"`, and similar for `"download_url"`.
+information such as `"status"`, which is one of `"complete"`, `"building"`,
+`"canceled"` or `"pending"`. `"build_url"` which points `buildbot_job_url()`,
+and `"started_at"` if the the status is such that that makes sense.
 """
-function status(job::BuildbotJob)
+function get_status(buildrequest_id::Int64)
     params = Dict(
         "property" => "*",
-        "buildrequestid" => string(job.buildrequest_id)
+        "buildrequestid" => string(buildrequest_id)
     )
     res = get_or_die("$buildbot_base/api/v2/builds"; query=params)
     builds = JSON.parse(readstring(res.body))["builds"]
@@ -91,9 +99,9 @@ function status(job::BuildbotJob)
                 return Dict(
                     "status" => "canceled",
                     "result" => 5,
-                    "build_url" => buildrequest_url(job),
-                    "download_url" => "",
+                    "build_url" => buildrequest_url(buildrequest_id),
                     "start_time" => 0,
+                    "data" => data,
                 )
             end
         end
@@ -102,9 +110,9 @@ function status(job::BuildbotJob)
         return Dict(
             "status" => "pending",
             "result" => -1,
-            "build_url" => buildrequest_url(job),
-            "download_url" => "",
+            "build_url" => buildrequest_url(buildrequest_id),
             "start_time" => 0,
+            "data" => builds,
         )
     end
 
@@ -126,8 +134,21 @@ function status(job::BuildbotJob)
     return Dict(
         "status" => status_name,
         "result" => data["results"],
-        "build_url" => build_url(job, data),
-        "download_url" => build_download_url(data),
+        "build_url" => build_url(data),
         "start_time" => data["started_at"],
+        "data" => data
     )
+end
+
+function build_status(job::BuildbotJob)
+    status = get_status(job.buildrequest_id)
+    if status["status"] == "complete"
+        status["download_url"] = build_download_url(status["data"])
+    end
+    return status
+end
+
+function code_status(job::BuildbotJob)
+    status = get_status(job.coderun_buildrequest_id)
+    return status
 end

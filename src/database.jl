@@ -1,14 +1,35 @@
 using MySQL, DataFrames
 
 
-con = nothing
+db_connection = nothing
 function db_login()
-    global con
+    global db_connection
     log("Authenticating to mysql...")
-    con = mysql_connect("nureha.cs.washington.edu", MYSQL_USER, MYSQL_PASSWORD, "jlbuild")
+    db_connection = mysql_connect("nureha.cs.washington.edu", MYSQL_USER, MYSQL_PASSWORD, "jlbuild")
 
     # Create our tables if we need to
     create_tables()
+end
+
+function execute_or_die(command::AbstractString; verbose=false, login_retry = 0)
+    global db_connection
+    try
+        if verbose
+            log("Executing SQL query: [$command]")
+        end
+        return mysql_execute(db_connection, command)
+    catch e
+        if verbose
+            log("  That didn't go well: $(e)")
+        end
+        # Try logging in
+        if login_retry > 3
+            rethrow()
+        else
+            db_login()
+            return execute_or_die(command; verbose=verbose, login_retry=login_retry + 1)
+        end
+    end
 end
 
 # Schema for a JLBuildCommand.  Just gitsha and code
@@ -49,18 +70,19 @@ function create_schema(::Type{BuildbotJob})
         buildrequest_id INT NOT NULL,
         comment_id INT NOT NULL,
         done BOOLEAN NOT NULL,
+        code_run BOOLEAN NOT NULL,
+        coderun_buildrequest_id INT NOT NULL,
         PRIMARY KEY (gitsha, builder_id, buildrequest_id),
         CONSTRAINT fk_cmd FOREIGN KEY (gitsha, comment_id) REFERENCES JLBuildCommand (gitsha, comment_id)
     """
 end
 
 function sql_fields(::Type{BuildbotJob})
-    return (:gitsha, :builder_id, :buildrequest_id, :comment_id, :done)
+    return (:gitsha, :builder_id, :buildrequest_id, :comment_id, :done, :code_run, :coderun_buildrequest_id)
 end
 
 function table_exists(table_name::AbstractString)
-    global con
-    result = mysql_execute(con, """
+    result = execute_or_die("""
         SELECT *
         FROM information_schema.tables
         WHERE table_schema = 'jlbuild' AND table_name = '$table_name'
@@ -70,7 +92,6 @@ function table_exists(table_name::AbstractString)
 end
 
 function create_tables()
-    global con
     for name in [:JLBuildCommand, :BuildbotJob]
         @eval begin
             if !table_exists($("$name"))
@@ -80,7 +101,7 @@ function create_tables()
                         $(create_schema($name))
                     )
                 """
-                mysql_execute(con, cmd)
+                execute_or_die(cmd)
             end
         end
     end
@@ -88,8 +109,8 @@ end
 
 # Strings must be quoted
 function dbescape(x::AbstractString)
-    global con
-    return mysql_escape(con, x)
+    global db_connection
+    return mysql_escape(db_connection, x)
 end
 # Bools should get translated to
 function dbescape(x::Bool)
@@ -102,8 +123,7 @@ dbescape(x) = dbescape(string(x))
 String(x::NAtype) = ""
 
 
-function dbsave{T}(x::T)
-    global con
+function dbsave{T}(x::T; verbose=false)
     fields = sql_fields(T)
     values = collect(getfield(x, Symbol(f)) for f in fields)
     values = ("'$(dbescape(value))'" for value in values)
@@ -112,19 +132,18 @@ function dbsave{T}(x::T)
         REPLACE INTO $T ($(join(fields, ", "))) VALUES ($(join(values, ", ")));
         SET FOREIGN_KEY_CHECKS=1;
     """)
-    return mysql_execute(con, cmd)
+    return execute_or_die(cmd; verbose=false)
 end
 
-function dbload{T}(::Type{T}; kwargs...)
-    global con
+function dbload{T}(::Type{T}; verbose=false, kwargs...)
     fields = sql_fields(T)
     where_list = ["$(kv[1]) = '$(dbescape(kv[2]))'" for kv in kwargs]
 
     cmd = "SELECT $(join(fields, ", ")) FROM $T"
     if !isempty(where_list)
-        cmd = "$cmd WHERE $(join(where_list, ", "));"
+        cmd = "$cmd WHERE $(join(where_list, " AND "));"
     end
-    r = mysql_execute(con, cmd)
+    r = execute_or_die(cmd; verbose=verbose)
 
     # Collect the results from the SQL query, convert into arguments of the type
     # the constructor will expect, then construct objects from each row of r
@@ -134,7 +153,7 @@ function dbload{T}(::Type{T}; kwargs...)
     # order to override the base behavior of dbload(), just do "manual dispatch"
     if T <: JLBuildCommand
         for idx in 1:length(result)
-            result[idx].jobs = dbload(BuildbotJob, gitsha=result[idx].gitsha)
+            result[idx].jobs = dbload(BuildbotJob, gitsha=result[idx].gitsha, comment_id=result[idx].comment_id)
         end
     end
 

@@ -75,7 +75,7 @@ function verify_sender(event)
     return true
 end
 
-function get_comment_type(event::GitHub.WebhookEvent)
+function get_event_type(event::GitHub.WebhookEvent)
     if event.kind == "commit_comment"
         return :commit
     elseif event.kind == "pull_request_review_comment"
@@ -88,18 +88,24 @@ function get_comment_type(event::GitHub.WebhookEvent)
     return :unknown
 end
 
-function get_comment_sha(event::GitHub.WebhookEvent)
+function get_event_sha(event::GitHub.WebhookEvent)
+    global github_auth
     try
         return event.payload["comment"]["commit_id"]
     end
     try
         return event.payload["pull_request"]["head"]["sha"]
     end
-    log("Couldn't get gitsha from event of type $(get_comment_type(event))")
+    try
+        issue_number = event.payload["issue"]["number"]
+        pr = GitHub.pull_request(event.repository, issue_number, auth=github_auth)
+        return get(get(pr.head).sha)
+    end
+    log("Couldn't get gitsha from event of type $(get_event_type(event))")
     return ""
 end
 
-function get_comment_place(event::GitHub.WebhookEvent)
+function get_event_place(event::GitHub.WebhookEvent)
     try
         return event.payload["pull_request"]["number"]
     end
@@ -107,20 +113,31 @@ function get_comment_place(event::GitHub.WebhookEvent)
         return event.payload["issue"]["number"]
     end
     try
-        return get_comment_sha(event)
+        return get_event_sha(event)
     end
+end
+
+function get_event_body(event::GitHub.WebhookEvent)
+    try
+        return event.payload["comment"]["body"]
+    end
+    try
+        return event.payload["pull_request"]["body"]
+    end
+    log("could not get comment body from event of type $(get_event_type(event))")
+    return ""
 end
 
 function parse_commands(event::GitHub.WebhookEvent)
     # Grab the gitsha that this PR/review/whatever defaults to
-    default_commit = get_comment_sha(event)
+    default_commit = get_event_sha(event)
     log("  Got default_commit of $default_commit")
-    body = event.payload["comment"]["body"]
+    body = get_event_body(event)
     cmds = parse_commands(body; default_commit=default_commit)
     for cmd in cmds
         cmd.repo_name = get(event.repository.full_name)
-        cmd.comment_place = string(get_comment_place(event))
-        cmd.comment_type = get_comment_type(event)
+        cmd.comment_place = string(get_event_place(event))
+        cmd.comment_type = get_event_type(event)
     end
     return cmds
 end
@@ -150,8 +167,8 @@ function parse_commands(body::AbstractString; default_commit="")
         end
 
         # Only add this guy if he doesn't already exist in the list of commands
-        if isempty(filter(x -> x.gitsha == gitsha, commands))
-            push!(commands,JLBuildCommand(normalize_gitsha(gitsha), code_block))
+        if isempty(filter(x -> x.gitsha == gitsha, commands)) && verify_gitsha(gitsha)
+            push!(commands,JLBuildCommand(gitsha, code_block))
         end
     end
 

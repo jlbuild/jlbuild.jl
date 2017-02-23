@@ -20,24 +20,33 @@ function showerror(io::IO, e::HTTPError)
 end
 
 
+
 # This get's the given url and returns it, or throws an error
-function get_or_die(url, login_retry=0; kwargs...)
+function http_or_die(method, uri, login_retry=0; kwargs...)
     global client
-    res = HTTP.get(client, url; kwargs...)
+    res = HTTP.request(client, method, uri; kwargs...)
     if res.status != 200
-        # Always login and retry once if we're unauthorized
+        # Always login and retry a few times if we're unauthorized, because the
+        # HTTP.jl <--> buildbot channel is ridiculously flaky. I don't know why.
         if res.status == 403
             if login_retry > 3
                 throw(BuildbotLoginError())
             end
             buildbot_login()
-            return get_or_die(url, login_retry + 1; kwargs...)
+            return http_or_die(method, uri, login_retry + 1; kwargs...)
         end
-        url_short = url[length(buildbot_base)+1:end]
-        throw(HTTPError("GET", url_short, res.status))
+        throw(HTTPError(method, uri, res.status))
     end
     return res
 end
+
+function get_or_die(url; query="", kwargs...)
+    return http_or_die("GET", HTTP.URI(url; query=query); kwargs...)
+end
+function post_or_die(url; kwargs...)
+    return http_or_die("POST", HTTP.URI(url); kwargs...)
+end
+
 
 # This is how we authenticate to buildbot through GitHub
 function buildbot_login()
@@ -90,22 +99,22 @@ function submit_buildcommand!(cmd::JLBuildCommand)
 
     job_list = BuildbotJob[]
     for builder_id in keys(julia_builder_ids)
-        gitsha = normalize_gitsha(cmd.gitsha)
         data = JSON.json(Dict(
             "id" => 1,
             "method" => "force",
             "jsonrpc" => "2.0",
             "params" => Dict(
-                "revision" => gitsha,
+                "revision" => cmd.gitsha,
                 "builderid" => builder_id,
             ),
         ))
 
-        res = HTTP.post(client, force_url; body=data)
+        res = post_or_die(force_url; body=data)
         buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
-        job = BuildbotJob(gitsha, builder_id, buildrequest_id, cmd.comment_id)
+        job = BuildbotJob(cmd.gitsha, builder_id, buildrequest_id, cmd.comment_id)
         push!(job_list, job)
         dbsave(job)
+        log("Initiated build of $(cmd.gitsha[1:10]) on $(builder_name(job))")
     end
 
     cmd.jobs = job_list
