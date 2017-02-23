@@ -51,7 +51,7 @@ function buildrequest_url(job::BuildbotJob)
     return buildrequest_url(job.buildrequest_id)
 end
 
-function get_builds(buildrequest_id)
+function get_builds(buildrequest_id::Int64)
     params = Dict(
         "property" => "*",
         "buildrequestid" => buildrequest_id
@@ -60,6 +60,14 @@ function get_builds(buildrequest_id)
     return JSON.parse(readstring(res.body))["builds"]
 end
 
+function get_buildrequests(buildrequest_id::Int64)
+    params = Dict(
+        "property" => "*",
+        "buildrequestid" => buildrequest_id
+    )
+    res = get_or_die("$buildbot_base/api/v2/buildrequests"; query=params)
+    return JSON.parse(readstring(res.body))["buildrequests"]
+end
 
 """
 `build_download_url(data::Dict)`
@@ -95,8 +103,7 @@ function get_status(buildrequest_id::Int64)
     if isempty(builds)
         # check to make sure that the buildrequest itself wasn't canceled
         try
-            res = get_or_die("$buildbot_base/api/v2/buildrequests"; query=params)
-            data = JSON.parse(readstring(res.body))["buildrequests"][1]
+            data = get_buildrequests(buildrequest_id)[1]
 
             # If data["complete"], then this build was canceled
             if data["complete"]
