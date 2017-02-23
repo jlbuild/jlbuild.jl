@@ -35,7 +35,7 @@ function http_or_die(method, uri, login_retry=0; kwargs...)
             buildbot_login()
             return http_or_die(method, uri, login_retry + 1; kwargs...)
         end
-        throw(HTTPError(method, uri, res.status))
+        throw(HTTPError(method, string(uri), res.status))
     end
     return res
 end
@@ -58,28 +58,37 @@ function buildbot_login()
 end
 
 const julia_builder_ids = Dict{Int64,String}()
-function list_forceschedulers!()
-    global julia_builder_ids
-
+const coderunner_builder_ids = Dict{Int64,String}()
+function list_forceschedulers!(mapping::Dict{Int64,String}, scheduler_name::AbstractString; name_prefix::AbstractString = "")
     # Get the force_julia_package builder names
     res = get_or_die("$buildbot_base/api/v2/forceschedulers")
     data = JSON.parse(readstring(res.body))["forceschedulers"]
-    builder_names = first(z["builder_names"] for z in data if z["name"] == "force_julia_package")
+    names = first(z["builder_names"] for z in data if z["name"] == scheduler_name)
 
     # Now, find the builder ids that match those names
     res = get_or_die("$buildbot_base/api/v2/builders")
     data = JSON.parse(readstring(res.body))["builders"]
-    empty!(julia_builder_ids)
+    empty!(mapping)
     for z in data
-        if z["name"] in builder_names && startswith(z["name"], "package_")
-            julia_builder_ids[z["builderid"]] = z["name"]
+        if z["name"] in names && startswith(z["name"], name_prefix)
+            mapping[z["builderid"]] = z["name"]
         end
     end
     return nothing
 end
 
+function list_julia_forceschedulers!()
+    global julia_builder_ids
+    list_forceschedulers!(julia_builder_ids, "force_julia_package"; name_prefix="package_")
+end
 
-const force_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
+function list_runcode_forceschedulers!()
+    global coderunner_builder_ids
+    list_forceschedulers!(coderunner_builder_ids, "run_code")
+end
+
+
+const forcebuild_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
 """
 `submit_buildcommand!(cmd::JLBuildCommand)`
 
@@ -91,11 +100,11 @@ If `cmd.jobs` already exists, it will be heartlessly overwritten with no regard
 for the jobs that already existed.
 """
 function submit_buildcommand!(cmd::JLBuildCommand)
-    global force_url
+    global forcebuild_url, julia_builder_ids
 
     # initialize the list of builder ids we're interested in every time.  We
     # don't want to fall behind the times if the buildbot topology changes.
-    list_forceschedulers!()
+    list_julia_forceschedulers!()
 
     job_list = BuildbotJob[]
     for builder_id in keys(julia_builder_ids)
@@ -109,7 +118,7 @@ function submit_buildcommand!(cmd::JLBuildCommand)
             ),
         ))
 
-        res = post_or_die(force_url; body=data)
+        res = post_or_die(forcebuild_url; body=data)
         buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
         job = BuildbotJob(cmd.gitsha, builder_id, buildrequest_id, cmd.comment_id)
         push!(job_list, job)
@@ -123,4 +132,43 @@ function submit_buildcommand!(cmd::JLBuildCommand)
     # Save out this command after updating it
     dbsave(cmd)
     return cmd
+end
+
+const forcecode_url = "$buildbot_base/api/v2/forceschedulers/run_code"
+function submit_coderun!(cmd::JLBuildCommand, job::BuildbotJob)
+    global forcecode_url, coderunner_builder_ids
+
+    # Initialize the list of builder ids we're interested in
+    list_runcode_forceschedulers!();
+
+    builds = get_builds(job.buildrequest_id)
+    if isempty(builds)
+        log("Empty build properties on buildrequest $(buildrequest_id)!")
+        return
+    end
+
+    data = builds[1]
+    props = Dict(k=>data["properties"][k][1] for k in keys(data["properties"]))
+    majmin = props["majmin"]
+    shortcommit = props["shortcommit"]
+
+    # Find the builder that matches the packager this was built on
+    name_suffix = builder_name(job)[length("package_")+1:end]
+    builder_id = first(k for (k,v) in coderunner_builder_ids if v[9:end] == name_suffix)
+
+    data = JSON.json(Dict(
+        "id" => 1,
+        "method" => "force",
+        "jsonrpc" => "2.0",
+        "params" => Dict(
+            "builderid" => builder_id,
+            "code_block" => cmd.code,
+            "majmin" => majmin,
+            "shortcommit" => shortcommit,
+        ),
+    ))
+    res = post_or_die(forcecode_url; body=data)
+    job.coderun_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+    dbsave(job)
+    return job
 end

@@ -110,6 +110,9 @@ end
 # Strings must be quoted
 function dbescape(x::AbstractString)
     global db_connection
+    if db_connection == nothing
+        db_login()
+    end
     return mysql_escape(db_connection, x)
 end
 # Bools should get translated to

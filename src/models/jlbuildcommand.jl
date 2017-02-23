@@ -29,6 +29,10 @@ function JLBuildCommand(gitsha::AbstractString, code::AbstractString, submitted:
     return JLBuildCommand(gitsha, code, submitted, repo_name, comment_id, comment_place, comment_type, comment_url, BuildbotJob[])
 end
 
+function JLBuildCommand(job::BuildbotJob)
+    return dbload(JLBuildCommand; gitsha=job.gitsha, comment_id=job.comment_id)[1]
+end
+
 function ==(x::JLBuildCommand, y::JLBuildCommand)
     return x.gitsha == y.gitsha && x.code == y.code
 end

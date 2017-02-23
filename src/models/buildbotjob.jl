@@ -21,7 +21,7 @@ Return the name of the builder running this job.
 function builder_name(job::BuildbotJob)
     global julia_builder_ids
     if isempty(julia_builder_ids)
-        list_forceschedulers!()
+        list_julia_forceschedulers!()
     end
     return julia_builder_ids[job.builder_id]
 end
@@ -49,6 +49,15 @@ end
 
 function buildrequest_url(job::BuildbotJob)
     return buildrequest_url(job.buildrequest_id)
+end
+
+function get_builds(buildrequest_id)
+    params = Dict(
+        "property" => "*",
+        "buildrequestid" => buildrequest_id
+    )
+    res = get_or_die("$buildbot_base/api/v2/builds"; query=params)
+    return JSON.parse(readstring(res.body))["builds"]
 end
 
 
@@ -82,12 +91,7 @@ information such as `"status"`, which is one of `"complete"`, `"building"`,
 and `"started_at"` if the the status is such that that makes sense.
 """
 function get_status(buildrequest_id::Int64)
-    params = Dict(
-        "property" => "*",
-        "buildrequestid" => string(buildrequest_id)
-    )
-    res = get_or_die("$buildbot_base/api/v2/builds"; query=params)
-    builds = JSON.parse(readstring(res.body))["builds"]
+    builds = get_builds(buildrequest_id)
     if isempty(builds)
         # check to make sure that the buildrequest itself wasn't canceled
         try

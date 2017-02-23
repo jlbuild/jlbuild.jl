@@ -27,6 +27,12 @@ function build_eventloop()
 
     # We run forever, or until someone falsifies run_event_loop
     while run_event_loop
+        # Find any BuildbotJob's that aren't completed, or haven't run their code yet
+        pending_code_jobs = dbload(BuildbotJob; done=true, code_run=false, coderun_buildrequest_id=0)
+        for job in pending_code_jobs
+            submit_coderun!(JLBuildCommand(job), job)
+        end
+
         # Find any JLBC's that haven't been submitted to the buildbot at all
         new_cmds = dbload(JLBuildCommand; submitted=false)
         for idx in 1:length(new_cmds)
@@ -34,17 +40,16 @@ function build_eventloop()
             submit_buildcommand!(new_cmds[idx])
         end
 
-        # Find any BuildbotJob's that aren't completed
-        pending_jobs = dbload(BuildbotJob; done=false)
-        cmd_refs = unique([Dict(:gitsha => j.gitsha, :comment_id => j.comment_id) for j in pending_jobs])
-        for cmd_ref in cmd_refs
-            cmd = dbload(JLBuildCommand; cmd_ref...)[1]
-            update_comment(cmd)
+        # Find any pending jobs that haven't finished building yet, add that to
+        # the list of buildbot jobs that haven't had their code completed yet
+        jobs = vcat(dbload(BuildbotJob; done=false), pending_code_jobs)
+        cmd_refify = j -> Dict(:gitsha => j.gitsha, :comment_id => j.comment_id)
+        for cmd_ref in unique([cmd_refify(j) for j in jobs])
+            # Update the comments for all JLBuildCommand's whose jobs have had
+            # activity.  We do this down here so that we don't waste time and
+            # rate limited resources updating the comment of a JLBC twice.
+            update_comment(dbload(JLBuildCommand; cmd_ref...)[1])
         end
-
-        # Find any BuildbotJob's that are done running but haven't run code yet
-        pending_jobs = dbload(BuildbotJob; done=true, code_run=false)
-
 
         # Sleep a bit each iteration, so we're not a huge CPU hog
         sleep(15)
@@ -108,6 +113,7 @@ function update_comment(cmd::JLBuildCommand)
 
             # Output status
             jstat = job_status["status"]
+            cstat = nothing
             msg = msg * "| [$(uppercase(jstat))]($(job_status["build_url"]))"
 
             # Build "status" column
@@ -128,11 +134,17 @@ function update_comment(cmd::JLBuildCommand)
 
             # Build "Code Output" column
             if jstat == "complete"
-                cstat = code_status(job)
+                # Only bother hitting the buildbot for code status if it has
+                # already successfully completed building!
+                coderun_status = code_status(job)
+                cstat = coderun_status["status"]
+                msg = msg * "| [$(uppercase(cstat))]($(coderun_status["build_url"]))"
+            else
+                msg = msg * "| N/A "
             end
 
 
-            msg = msg * "| N/A "
+
 
             if jstat in ["canceled", "complete", "errored"]
                 # Make sure to flip the job.done bit here so these get out of
@@ -141,7 +153,7 @@ function update_comment(cmd::JLBuildCommand)
 
                 # If a job was canceled or errored, say that the code was run
                 # as well, so that we don't keep trying to run its code. :(
-                if jstat in ["canceled", "errored"]
+                if jstat in ["canceled", "errored"] || cstat == "complete"
                     job.code_run = true
                 end
                 dbsave(job)
