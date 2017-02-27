@@ -84,6 +84,8 @@ function get_event_type(event::GitHub.WebhookEvent)
         return :pr
     elseif event.kind == "issue_comment"
         return :pr
+    elseif event.kind == "issues"
+        return :pr
     end
     return :unknown
 end
