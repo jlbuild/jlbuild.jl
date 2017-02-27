@@ -201,12 +201,13 @@ function parse_commands(body::AbstractString; default_commit="")
             code_block = strip(m.captures[3])
         end
 
-        # Only add this guy if he doesn't already exist in the list of commands
-        new_cmd = JLBuildCommand(gitsha=gitsha, code=code_block; should_nuke = should_nuke,
-                                 builder_filter = builder_filter)
-        if isempty(filter(x -> x == new_cmd, commands))
-            push!(commands, new_cmd)
-        end
+        # Add the built command here
+        push!(commands, JLBuildCommand(;
+            gitsha = gitsha,
+            code = code_block,
+            should_nuke = should_nuke,
+            builder_filter = builder_filter
+        ))
     end
 
     return commands

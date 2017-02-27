@@ -2,6 +2,14 @@ using Base.Test
 include("../src/jlbuild.jl")
 using jlbuild
 
+# Mockup some internal datastructures with testing data
+builder_suffixes = ["linux64", "osx64", "win32", "linuxarmv7l"]
+for idx in 1:length(builder_suffixes)
+    jlbuild.julia_builder_ids[idx]      = "package_$(builder_suffixes[idx])"
+    jlbuild.coderunner_builder_ids[idx] = "code_run_$(builder_suffixes[idx])"
+    jlbuild.nuke_builder_ids[idx]       = "nuke_$(builder_suffixes[idx])"
+end
+
 # First, test that we are able to probe gitshas properly
 test_gitsha = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
 short_gitsha = test_gitsha[1:10]
@@ -33,7 +41,7 @@ println("Hello, world!")
 """)
 @testset "JLBuildCommand" begin
     # Test that the constructors and whatnot work like we expect
-    jlbc = JLBuildCommand(test_gitsha, test_code)
+    jlbc = JLBuildCommand(gitsha=test_gitsha, code=test_code)
     @test jlbc.gitsha == test_gitsha
     @test jlbc.code == test_code
     @test !jlbc.should_nuke
@@ -58,7 +66,7 @@ And a real one that is split
 long_gitshas = ["1a2b3c4d", "6a7b8c9d", test_gitsha, short_gitsha]
 
 # Test stuff for commands
-cmd_test_code = strip("""
+cmd_code = strip("""
 for idx = 1:10
     println("Hello, I am: \$(Base.GIT_VERSION_INFO.commit)")
 end
@@ -71,7 +79,13 @@ Ensure that this first code block doesn't get matched with the second
 
 @jlbuild $test_gitsha
 ```julia
-$cmd_test_code
+$cmd_code
+```
+
+Test that code + tags works properly
+@jlbuild $test_gitsha !nuke
+```julia
+$cmd_code
 ```
 """
 @testset "command parsing" begin
@@ -89,29 +103,32 @@ $cmd_test_code
     @test parse_commands("a\n@jlbuild $test_gitsha\na")[1].gitsha == test_gitsha
     @test isempty(parse_commands("\nlololol\nkekeke @jlbuild $test_gitsha"))
 
-    # Test nuke tag works
+    # Test nuke tag works properly
     @test parse_commands("@jlbuild $test_gitsha !nuke")[1].should_nuke
+    @test isempty(parse_commands("@jlbuild !nuke $test_gitsha"))
 
     # Test filter tag works
     cmd = parse_commands("@jlbuild $test_gitsha !filter=osx,win")[1]
     @test cmd.builder_filter == "osx,win"
-
-    # Test builder_filter works with the filter we just gave it
-    builders = ["package_osx64", "package_linux64", "package_win32"]
-    @test builder_filter(cmd, builders) == ["package_osx64", "package_win32"]
+    builder_ids = collect(1:4)
+    filt_builder_ids = builder_filter(cmd, builder_ids)
+    @test builder_name.(filt_builder_ids) == ["package_osx64", "package_win32"]
 
     # Test two tags together works
-    cmd = parse_commands("@jlbuild $test_gitsha !nuke !filter=linux")[1]
+    cmd = parse_commands("@jlbuild $test_gitsha !nuke !filter=linux64")[1]
     @test cmd.should_nuke
-    @test cmd.builder_filter == "linux"
-    @test builder_filter(cmd, builders) == ["package_linux64"]
+    @test cmd.builder_filter == "linux64"
+    @test builder_name.(builder_filter(cmd, builder_ids)) == ["package_linux64"]
 
     # Test parsing of a large comment
     @test [c.gitsha for c in parse_commands(long_gitsha_test)] == long_gitshas
 
     # Test parsing of multiple code blocks
-    @test parse_commands(cmd_test) == [
-        JLBuildCommand(test_gitsha, ""),
-        JLBuildCommand(test_gitsha, cmd_test_code)
-    ]
+    cmd_results = parse_commands(cmd_test)
+    @test length(cmd_results) == 3
+    @test all(r.gitsha == test_gitsha for r in cmd_results)
+    @test cmd_results[1].code == ""
+    @test all(r.code == cmd_code for r in cmd_results[2:end])
+    @test all(r.should_nuke == false for r in cmd_results[1:2])
+    @test cmd_results[3].should_nuke == true
 end

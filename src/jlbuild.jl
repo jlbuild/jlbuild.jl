@@ -3,7 +3,7 @@ module jlbuild
 import GitHub
 using HTTP, JSON
 export run_server, JLBuildCommand, BuildbotJob, dbload, dbsave, verify_gitsha,
-        parse_commands, normalize_gitsha, builder_filter
+        parse_commands, normalize_gitsha, builder_filter, builder_name
 
 include("logging.jl")
 include("models/buildbotjob.jl")

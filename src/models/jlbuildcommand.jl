@@ -31,18 +31,9 @@ function JLBuildCommand(;gitsha="", code="", submitted = false, repo_name = "",
                           builder_filter, should_nuke, jobs)
 end
 
-# Special constructor for testing
-function JLBuildCommand(gitsha, code)
-    return JLBuildCommand(gitsha=gitsha, code=code)
-end
-
 # Helper function to load the JLBC that belongs to a particular BuildbotJob
 function JLBuildCommand(job::BuildbotJob)
     return dbload(JLBuildCommand; gitsha=job.gitsha, comment_id=job.comment_id)[1]
-end
-
-function ==(x::JLBuildCommand, y::JLBuildCommand)
-    return x.gitsha == y.gitsha && x.code == y.code
 end
 
 function builder_filter(cmd::JLBuildCommand, builders)
