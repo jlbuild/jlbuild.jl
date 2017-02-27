@@ -1,4 +1,5 @@
 using HttpCommon
+using TimeZones
 
 # Github resource caching
 repo_cache = Dict{String,GitHub.Repo}()
@@ -28,7 +29,7 @@ function run_eventloop()
     # We run forever, or until someone falsifies run_event_loop
     while run_event_loop
         # Find any BuildbotJob's that aren't completed, or haven't run their code yet
-        pending_code_jobs = dbload(BuildbotJob; done=true, code_run=false, coderun_buildrequest_id=0)
+        pending_code_jobs = dbload(BuildbotJob; build_done=true, code_done=false, code_buildrequest_id=0)
         for job in pending_code_jobs
             submit_coderun!(JLBuildCommand(job), job)
         end
@@ -42,7 +43,7 @@ function run_eventloop()
 
         # Find any pending jobs that haven't finished building yet, add that to
         # the list of buildbot jobs that haven't had their code completed yet
-        jobs = vcat(dbload(BuildbotJob; done=false), pending_code_jobs)
+        jobs = vcat(dbload(BuildbotJob; build_done=false), pending_code_jobs)
         cmd_refify = j -> Dict(:gitsha => j.gitsha, :comment_id => j.comment_id)
         for cmd_ref in unique([cmd_refify(j) for j in jobs])
             # Update the comments for all JLBuildCommand's whose jobs have had
@@ -81,6 +82,21 @@ function comment!(cmd::JLBuildCommand, msg::AbstractString)
     end
 end
 
+function send_help_message(event)
+    help_message = strip("""
+I'm sorry, I couldn't parse out any valid commands from your comment.
+Please see my [README](https://github.com/jlbuild/jlbuild.jl) for instructions on how to use me.
+    """)
+    global github_auth
+    GitHub.create_comment(
+        event.repository,
+        get_event_place(event),
+        get_event_type(event),
+        auth = github_auth,
+        params = Dict("body" => help_message)
+    )
+end
+
 comment_text_cache = Dict{String,String}()
 function update_comment(cmd::JLBuildCommand)
     global comment_text_cache
@@ -102,59 +118,87 @@ function update_comment(cmd::JLBuildCommand)
     else
         msg = "## Status of $(gitsha_url) builds:\n\n"
 
-        msg = msg * "| Builder Name | Build | Download | Code Output |\n"
-        msg = msg * "| :----------- | :----: | :------: | :---------: |\n"
+        # First, build a header
+        header = "| Builder Name "
+        subder = "| :----------- "
+
+        # If we're nuking, include a "Nuke" column
+        if cmd.should_nuke
+            header *= "| Nuke "
+            subder *= "| :--: "
+        end
+
+        # We always post build and download columns
+        header *= "| Build | Download "
+        subder *= "| :---: | :------: "
+
+        # If we're running code, include a code column
+        if !isempty(cmd.code)
+            header *= "| Code Output "
+            subder *= "| :---------: "
+        end
+
+        # Slap these onto `msg` as the header, then start outputting the rows
+        msg *= header * "|\n" * subder * "|\n"
         for job in sort(cmd.jobs, by=j -> builder_name(j))
             name = builder_name(job)
-            job_status = build_status(job)
 
             # Output name
             msg = msg * "| [$name]($(builder_url(job))) "
 
-            # Output status
-            jstat = job_status["status"]
-            cstat = nothing
-            msg = msg * "| [$(uppercase(jstat))]($(job_status["build_url"]))"
-
-            # Build "status" column
-            if jstat == "building"
-                start_time = Libc.strftime(job_status["start_time"])
-                msg = msg * ", started at $start_time "
-            else
-                msg = msg * " "
+            # If we are supposed to nuke, output nuke status
+            if cmd.should_nuke
+                nuke_stat = nuke_status(job)
+                nstat = nuke_stat["status"]
+                msg *= "| [$(uppercase(nstat))]($(nuke_stat["build_url"])) "
             end
 
-            # Build download column
-            if jstat == "complete"
-                dl_url = job_status["download_url"]
+            # Build status
+            build_stat = build_status(job)
+            bstat = build_stat["status"]
+            msg = msg * "| [$(uppercase(bstat))]($(build_stat["build_url"])) "
+
+            if bstat == "building"
+                start_time = Dates.unix2datetime(build_stat["start_time"])
+                start_time = ZonedDateTime(start_time, TimeZone("UTC"))
+                start_time = astimezone(start_time, TimeZone("America/Los_Angeles"))
+                start_time = Dates.format(start_time, "U dd, HH:MM:SS Z")
+                msg = msg * "started at $start_time "
+            end
+
+            # Download column
+            if bstat == "complete"
+                dl_url = build_stat["download_url"]
                 msg = msg * "| [Download]($dl_url) "
             else
                 msg = msg * "| N/A "
             end
 
-            # Build "Code Output" column
-            if jstat == "complete"
-                # Only bother hitting the buildbot for code status if it has
-                # already successfully completed building!
-                coderun_status = code_status(job)
-                cstat = coderun_status["status"]
-                msg = msg * "| [$(uppercase(cstat))]($(coderun_status["build_url"]))"
-            else
-                msg = msg * "| N/A "
+            # Code Output column.  We need cstat later, so define it out here
+            cstat = nothing
+            if !isempty(cmd.code)
+                if bstat == "complete"
+                    # Only bother hitting the buildbot for code status if it has
+                    # already successfully completed building!
+                    coderun_status = code_status(job)
+                    cstat = coderun_status["status"]
+                    msg = msg * "| [$(uppercase(cstat))]($(coderun_status["build_url"])) "
+                else
+                    msg = msg * "| N/A "
+                end
             end
 
-
-
-
-            if jstat in ["canceled", "complete", "errored"]
-                # Make sure to flip the job.done bit here so these get out of
-                # the pool of jobs that get reprocessed
-                job.done = true
+            if bstat in ["canceled", "complete", "errored"]
+                # Make sure to flip the job.build_done bit here so these get out
+                # of the pool of jobs that get reprocessed
+                job.build_done = true
 
                 # If a job was canceled or errored, say that the code was run
-                # as well, so that we don't keep trying to run its code. :(
-                if jstat in ["canceled", "errored"] || cstat == "complete"
-                    job.code_run = true
+                # as well, so that we don't keep trying to run its code.  Also
+                # say the code was run if it actually was, was canceled, or
+                # errored out somehow.
+                if bstat in ["canceled", "errored"] || cstat in ["canceled", "complete", "errored"]
+                    job.code_done = true
                 end
                 dbsave(job)
             end
@@ -172,32 +216,34 @@ function update_comment(cmd::JLBuildCommand)
 end
 
 event_ = nothing
-function callback(event::GitHub.WebhookEvent)
+function github_callback(event::GitHub.WebhookEvent)
     # debugging
-    global event_
-    event_ = event
+    global event_, github_auth
 
     # verify we should be listening to this comment at all
     if !verify_sender(event)
         return HttpCommon.Response(202, "bad sender")
     end
 
+    event_ = event
+
     # Next, parse out the commands
     commands = parse_commands(event)
 
     # Filter them on whether they point to valid gitsha's and normalize them
-    commands = filter(c -> verify_gitsha(c), commands)
-    for cmd in commands
+    filt_commands = filter(c -> verify_gitsha(c), commands)
+    for cmd in filt_commands
         cmd.gitsha = normalize_gitsha(cmd.gitsha)
     end
 
-    if isempty(commands)
+    if isempty(filt_commands) && !isempty(commands)
+        send_help_message(event)
         return HttpCommon.Response(202, "no valid commands")
     end
 
     @schedule begin
         # Save each cmd to the db
-        for cmd in commands
+        for cmd in filt_commands
             update_comment(cmd)
         end
     end
@@ -212,16 +258,45 @@ function github_login()
     github_auth = GitHub.authenticate(GITHUB_AUTH_TOKEN)
 end
 
+function check_environment(;strict=false)
+    # Grab secret stuff from the environment
+    env_list = [
+        :GITHUB_AUTH_TOKEN,
+        :GITHUB_WEBHOOK_SECRET,
+        :MYSQL_USER,
+        :MYSQL_PASSWORD,
+        :MYSQL_HOST
+    ]
+    for name in env_list
+        @eval begin
+            global $name
+            $name = get(ENV, $(string(name)), $name)
+
+            if isempty($name) && $strict
+                error($("Must provide $(join(env_list, ", ")) as environment variables, but $(name) was empty"))
+            end
+        end
+    end
+end
+
 event_loop_task = nothing
 github_listener_task = nothing
 function run_server(port=7050)
     global GITHUB_AUTH_TOKEN, GITHUB_WEBHOOK_SECRET, github_auth
     global event_loop_task, github_listener_task
 
+    # Check the environment, make sure we have all our secrets loaded in
+    check_environment(strict=true)
+
+    # Update julia first things first, so that we don't have a huge delay when
+    # responding to our first github webhook while we clone down Julia
+    update_julia_repo()
+
+    # Login to Github, and let's get these event loops a-rollin'!
     github_login()
     repos = ["JuliaLang/julia", "jlbuild/jlbuild.jl"]
     events = ["commit_comment","pull_request","pull_request_review_comment","issues","issue_comment"]
-    listener = GitHub.EventListener(callback; events=events, auth=github_auth, secret=GITHUB_WEBHOOK_SECRET, repos=repos)
+    listener = GitHub.EventListener(github_callback; events=events, auth=github_auth, secret=GITHUB_WEBHOOK_SECRET, repos=repos)
     github_listener_task = @schedule run(listener, port)
     event_loop_task = @schedule run_eventloop()
 end

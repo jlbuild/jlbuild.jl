@@ -3,7 +3,7 @@ module jlbuild
 import GitHub
 using HTTP, JSON
 export run_server, JLBuildCommand, BuildbotJob, dbload, dbsave, verify_gitsha,
-        parse_commands
+        parse_commands, normalize_gitsha, builder_filter
 
 include("logging.jl")
 include("models/buildbotjob.jl")
@@ -13,23 +13,14 @@ include("parsing.jl")
 include("server.jl")
 include("database.jl")
 
+# These must be overridden via environment variables
 GITHUB_AUTH_TOKEN = ""
 GITHUB_WEBHOOK_SECRET = ""
-MYSQL_USER = "root"
-MYSQL_PASSWORD = "sqlpassword123"
-MYSQL_HOST = "127.0.0.1"
-function __init__()
-    # Grab secret stuff from the environment
-    env_list = [:GITHUB_AUTH_TOKEN, :GITHUB_WEBHOOK_SECRET, :MYSQL_USER, :MYSQL_PASSWORD, :MYSQL_HOST]
-    for name in env_list
-        @eval begin
-            global $name
-            $name = get(ENV, $(string(name)), $name)
+MYSQL_USER = ""
+MYSQL_PASSWORD = ""
+MYSQL_HOST = ""
 
-            if isempty($name)
-                error($("Must provide $(join(env_list, ", ")) as environment variables, but $(name) was empty"))
-            end
-        end
-    end
-end
+# Try to bring in the environment variables, but don't throw a fit if they're
+# not available; we WILL throw a fit if they're not there at run_server() time
+check_environment()
 end # module jlbuild

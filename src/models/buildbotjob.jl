@@ -1,16 +1,31 @@
 # This describes a single buildbot job.
 type BuildbotJob
+    # Linkage to
     gitsha::String
+    comment_id::Int64
+
+    # Nuking
+    nuke_buildrequest_id::Int64
+    nuke_done::Bool
+
+    # building
     builder_id::Int64
     buildrequest_id::Int64
-    comment_id::Int64
-    done::Bool
-    code_run::Bool
-    coderun_buildrequest_id::Int64
+    build_done::Bool
+
+    # Code running
+    code_buildrequest_id::Int64
+    code_done::Bool
 end
 
-function BuildbotJob(gitsha::AbstractString, builder_id::Int64, buildrequest_id::Int64, comment_id::Int64)
-    return BuildbotJob(gitsha, builder_id, buildrequest_id, comment_id, false, false, 0)
+# Provide both kwargs and non-kwargs versions of this function
+function BuildbotJob(;gitsha="", comment_id=0, nuke_buildrequest_id=0,
+                     nuke_done=false, builder_id=0, buildrequest_id=0,
+                     build_done=false, code_buildrequest_id=0, code_done=false)
+    # Construct the object
+    return BuildbotJob(gitsha, comment_id, nuke_buildrequest_id, nuke_done,
+                       builder_id, buildrequest_id, build_done,
+                       code_buildrequest_id, code_done)
 end
 
 """
@@ -18,12 +33,21 @@ end
 
 Return the name of the builder running this job.
 """
-function builder_name(job::BuildbotJob)
+function builder_name(builder_id::Int64)
     global julia_builder_ids
     if isempty(julia_builder_ids)
         list_julia_forceschedulers!()
     end
-    return julia_builder_ids[job.builder_id]
+    return julia_builder_ids[builder_id]
+end
+
+function builder_name(job::BuildbotJob)
+    builder_name(job.builder_id)
+end
+
+function builder_name_suffix(job)
+    name = builder_name(job)
+    return name[rsearch(name,'_')+1:end]
 end
 
 function builder_url(job::BuildbotJob)
@@ -160,6 +184,11 @@ function build_status(job::BuildbotJob)
 end
 
 function code_status(job::BuildbotJob)
-    status = get_status(job.coderun_buildrequest_id)
+    status = get_status(job.code_buildrequest_id)
+    return status
+end
+
+function nuke_status(job::BuildbotJob)
+    status = get_status(job.nuke_buildrequest_id)
     return status
 end

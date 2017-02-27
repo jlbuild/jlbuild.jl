@@ -57,8 +57,6 @@ function buildbot_login()
     return nothing
 end
 
-const julia_builder_ids = Dict{Int64,String}()
-const coderunner_builder_ids = Dict{Int64,String}()
 function list_forceschedulers!(mapping::Dict{Int64,String}, scheduler_name::AbstractString; name_prefix::AbstractString = "")
     # Get the force_julia_package builder names
     res = get_or_die("$buildbot_base/api/v2/forceschedulers")
@@ -77,18 +75,31 @@ function list_forceschedulers!(mapping::Dict{Int64,String}, scheduler_name::Abst
     return nothing
 end
 
+const julia_builder_ids = Dict{Int64,String}()
 function list_julia_forceschedulers!()
     global julia_builder_ids
     list_forceschedulers!(julia_builder_ids, "force_julia_package"; name_prefix="package_")
 end
 
+const coderunner_builder_ids = Dict{Int64,String}()
 function list_runcode_forceschedulers!()
     global coderunner_builder_ids
     list_forceschedulers!(coderunner_builder_ids, "run_code")
 end
 
+const nuke_builder_ids = Dict{Int64,String}()
+function list_nuke_forceschedulers!()
+    global nuke_builder_ids
+    list_forceschedulers!(nuke_builder_ids, "nuke")
+end
+
+function matching_builder(builder_list, name_suffix)
+    return first(k for (k,v) in builder_list if endswith(v,name_suffix))
+end
+
 
 const forcebuild_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
+const nuke_url = "$buildbot_base/api/v2/forceschedulers/nuke"
 """
 `submit_buildcommand!(cmd::JLBuildCommand)`
 
@@ -106,8 +117,30 @@ function submit_buildcommand!(cmd::JLBuildCommand)
     # don't want to fall behind the times if the buildbot topology changes.
     list_julia_forceschedulers!()
 
+    if cmd.should_nuke
+        list_nuke_forceschedulers!()
+    end
+
     job_list = BuildbotJob[]
-    for builder_id in keys(julia_builder_ids)
+    for builder_id in builder_filter(cmd, keys(julia_builder_ids))
+        # If we should nuke before building, put the buildrequest in!
+        nuke_buildrequest_id = 0
+        if cmd.should_nuke
+            name_suffix = builder_name_suffix(builder_id)
+            nuke_builderid = matching_builder(nuke_builder_ids, name_suffix)
+            data = JSON.json(Dict(
+                "id" => 1,
+                "method" => "force",
+                "jsonrpc" => "2.0",
+                "params" => Dict(
+                    "builderid" => nuke_builderid,
+                ),
+            ))
+
+            res = post_or_die(nuke_url; body=data)
+            nuke_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+        end
+
         data = JSON.json(Dict(
             "id" => 1,
             "method" => "force",
@@ -120,7 +153,13 @@ function submit_buildcommand!(cmd::JLBuildCommand)
 
         res = post_or_die(forcebuild_url; body=data)
         buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
-        job = BuildbotJob(cmd.gitsha, builder_id, buildrequest_id, cmd.comment_id)
+        job = BuildbotJob(;
+            gitsha=cmd.gitsha,
+            builder_id=builder_id,
+            buildrequest_id=buildrequest_id,
+            comment_id=cmd.comment_id,
+            nuke_buildrequest_id=nuke_buildrequest_id,
+        )
         push!(job_list, job)
         dbsave(job)
         log("Initiated build of $(cmd.gitsha[1:10]) on $(builder_name(job))")
@@ -153,8 +192,8 @@ function submit_coderun!(cmd::JLBuildCommand, job::BuildbotJob)
     shortcommit = props["shortcommit"]
 
     # Find the builder that matches the packager this was built on
-    name_suffix = builder_name(job)[length("package_")+1:end]
-    builder_id = first(k for (k,v) in coderunner_builder_ids if v[9:end] == name_suffix)
+    name_suffix = builder_name_suffix(job)
+    builder_id = matching_builder(coderunner_builder_ids, name_suffix)
 
     data = JSON.json(Dict(
         "id" => 1,
@@ -168,7 +207,7 @@ function submit_coderun!(cmd::JLBuildCommand, job::BuildbotJob)
         ),
     ))
     res = post_or_die(forcecode_url; body=data)
-    job.coderun_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+    job.code_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
     dbsave(job)
     return job
 end

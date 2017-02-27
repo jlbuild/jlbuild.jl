@@ -11,28 +11,44 @@ type JLBuildCommand
     comment_type::Symbol
     comment_url::String
 
+    # Flags we can set
+    builder_filter::String
+    should_nuke::Bool
+
     # This is not SQL-serializeable, we have to recreate it
     jobs::Vector{BuildbotJob}
 end
 
-function JLBuildCommand(gitsha::AbstractString, code::NAtype)
-    return JLBuildCommand(gitsha, "", false, "", 0, "unknown", :unknown, "", BuildbotJob[])
+# Provide kwargs and non-kwargs version with all defaults
+function JLBuildCommand(;gitsha="", code="", submitted = false, repo_name = "",
+                         comment_id = 0, comment_place = "unknown",
+                         comment_type = :unknown, comment_url = "",
+                         builder_filter = "", should_nuke = false,
+                         jobs = BuildbotJob[])
+    # Construct the object
+    return JLBuildCommand(gitsha, code, submitted, repo_name, comment_id,
+                          comment_place, comment_type, comment_url,
+                          builder_filter, should_nuke, jobs)
 end
 
-function JLBuildCommand(gitsha::AbstractString, code::AbstractString)
-    return JLBuildCommand(gitsha, code, false, "", 0, "unknown", :unknown, "", BuildbotJob[])
+# Special constructor for testing
+function JLBuildCommand(gitsha, code)
+    return JLBuildCommand(gitsha=gitsha, code=code)
 end
 
-function JLBuildCommand(gitsha::AbstractString, code::AbstractString, submitted::Bool,
-                        repo_name::String, comment_id::Int64, comment_place::String,
-                        comment_type::Symbol, comment_url::String)
-    return JLBuildCommand(gitsha, code, submitted, repo_name, comment_id, comment_place, comment_type, comment_url, BuildbotJob[])
-end
-
+# Helper function to load the JLBC that belongs to a particular BuildbotJob
 function JLBuildCommand(job::BuildbotJob)
     return dbload(JLBuildCommand; gitsha=job.gitsha, comment_id=job.comment_id)[1]
 end
 
 function ==(x::JLBuildCommand, y::JLBuildCommand)
     return x.gitsha == y.gitsha && x.code == y.code
+end
+
+function builder_filter(cmd::JLBuildCommand, builders)
+    if isempty(cmd.builder_filter)
+        return builders
+    end
+    filters = split(cmd.builder_filter, ",")
+    return filter(b -> any(contains(builder_name(b), f) for f in filters), builders)
 end

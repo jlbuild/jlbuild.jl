@@ -43,6 +43,8 @@ function create_schema(::Type{JLBuildCommand})
         comment_place TEXT NOT NULL,
         comment_type TEXT NOT NULL,
         comment_url TEXT NOT NULL,
+        should_nuke BOOLEAN NOT NULL,
+        builder_filter TEXT NOT NULL,
         PRIMARY KEY (gitsha, comment_id)
     """
 end
@@ -57,6 +59,8 @@ function sql_fields(::Type{JLBuildCommand})
         :comment_place,
         :comment_type,
         :comment_url,
+        :should_nuke,
+        :builder_filter,
     )
 end
 
@@ -66,19 +70,31 @@ end
 function create_schema(::Type{BuildbotJob})
     return """
         gitsha CHAR(40) NOT NULL,
+        comment_id INT NOT NULL,
+        nuke_buildrequest_id INT NOT NULL,
+        nuke_done BOOL NOT NULL,
         builder_id INT NOT NULL,
         buildrequest_id INT NOT NULL,
-        comment_id INT NOT NULL,
-        done BOOLEAN NOT NULL,
-        code_run BOOLEAN NOT NULL,
-        coderun_buildrequest_id INT NOT NULL,
+        build_done BOOLEAN NOT NULL,
+        code_buildrequest_id INT NOT NULL,
+        code_done BOOLEAN NOT NULL,
         PRIMARY KEY (gitsha, builder_id, buildrequest_id),
         CONSTRAINT fk_cmd FOREIGN KEY (gitsha, comment_id) REFERENCES JLBuildCommand (gitsha, comment_id)
     """
 end
 
 function sql_fields(::Type{BuildbotJob})
-    return (:gitsha, :builder_id, :buildrequest_id, :comment_id, :done, :code_run, :coderun_buildrequest_id)
+    return (
+        :gitsha,
+        :comment_id,
+        :nuke_buildrequest_id,
+        :nuke_done,
+        :builder_id,
+        :buildrequest_id,
+        :build_done,
+        :code_buildrequest_id,
+        :code_done
+    )
 end
 
 function table_exists(table_name::AbstractString)
@@ -107,6 +123,12 @@ function create_tables()
     end
 end
 
+function moduleless_typename(T)
+    # Sigh, this is to work around the problem that if I run code interactively,
+    # it prepends the `jlbuild.` module specifier in front of my types.  :(
+    return "$T"[rsearch("$T", '.')+1:end]
+end
+
 # Strings must be quoted
 function dbescape(x::AbstractString)
     global db_connection
@@ -132,7 +154,8 @@ function dbsave{T}(x::T; verbose=false)
     values = ("'$(dbescape(value))'" for value in values)
     cmd = strip("""
         SET FOREIGN_KEY_CHECKS=0;
-        REPLACE INTO $T ($(join(fields, ", "))) VALUES ($(join(values, ", ")));
+        REPLACE INTO $(moduleless_typename(T)) ($(join(fields, ", ")))
+        VALUES ($(join(values, ", ")));
         SET FOREIGN_KEY_CHECKS=1;
     """)
     return execute_or_die(cmd; verbose=false)
@@ -142,21 +165,29 @@ function dbload{T}(::Type{T}; verbose=false, kwargs...)
     fields = sql_fields(T)
     where_list = ["$(kv[1]) = '$(dbescape(kv[2]))'" for kv in kwargs]
 
-    cmd = "SELECT $(join(fields, ", ")) FROM $T"
+    cmd = "SELECT $(join(fields, ", ")) FROM $(moduleless_typename(T))"
     if !isempty(where_list)
         cmd = "$cmd WHERE $(join(where_list, " AND "));"
     end
-    r = execute_or_die(cmd; verbose=verbose)
+    sql_result = execute_or_die(cmd; verbose=verbose)
 
     # Collect the results from the SQL query, convert into arguments of the type
     # the constructor will expect, then construct objects from each row of r
-    result = [T((fieldtype(T,f)(r[i,f]) for f in fields)...) for i in 1:size(r,1)]
+    result = T[]
+    for idx in 1:size(sql_result,1)
+        args = Dict(f => fieldtype(T,f)(sql_result[idx,f]) for f in fields)
+        push!(result, T(;args...))
+    end
 
     # Because we can't do fancy invoke stuff with keyword arguments on 0.5 in
     # order to override the base behavior of dbload(), just do "manual dispatch"
     if T <: JLBuildCommand
         for idx in 1:length(result)
-            result[idx].jobs = dbload(BuildbotJob, gitsha=result[idx].gitsha, comment_id=result[idx].comment_id)
+            result[idx].jobs = dbload(
+                BuildbotJob,
+                gitsha = result[idx].gitsha,
+                comment_id = result[idx].comment_id
+            )
         end
     end
 

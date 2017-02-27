@@ -145,30 +145,65 @@ end
 function parse_commands(body::AbstractString; default_commit="")
     commands = JLBuildCommand[]
 
-    # We automatically attempt to figure out what gitsha the user wants built.
-    # First, we see if there's an overriding gitsha given via @jlbuild <gitsha>
-    for m in eachmatch(r"^\s*\@jlbuild( +`?([0-9a-fA-F]+)`?)?"m, body)
-        if m.captures[2] != nothing
-            gitsha = m.captures[2]
-        else
-            gitsha = default_commit
+    # Build regex to find commands embedded in a comment body
+    regex = ""
+
+    # Start by finding a line that starts with `@jlbuild`, maybe with whitespace
+    regex *= "^\\s*\\@jlbuild"
+
+    # Build a capture group to find a gitsha immediately after `@jlbuild`. The
+    # gitsha can be enclosed within backticks, and the whole thing is optional.
+    regex *= "(?:[ \\t]+`?([0-9a-fA-F]+)`?)?"
+
+    # Build a group to find all tags that start with `!`
+    regex *= "((?:[ \\t]+![^\\s]+)*)"
+
+    # Build a group to find code blocks
+    regex *= "\\s*(?:```(?:julia)?(.*?)```)?\$"
+
+    for m in eachmatch(Regex(regex, "ms"), body)
+        # Initialize options to defaults
+        gitsha = default_commit
+        should_nuke = false
+        builder_filter = ""
+        code_block = ""
+
+        # If there's no gitsha capture, no biggie, use the default_commit passed
+        # in to us from scraping github.  If that doesn't exist, ignore this.
+        if m.captures[1] != nothing
+            gitsha = m.captures[1]
         end
 
+        # Early exit if we can't find a gitsha and we have no default gitsha
         if isempty(gitsha)
             continue
         end
 
-        # Let's see if there's a code block after this
-        code_block = ""
-        after_body = body[m.offset + length(m.match):end]
-        code_match = match(r"\s*```(julia)?(.*?)```"s, after_body)
-        if code_match != nothing
-            code_block = strip(code_match.captures[2])
+        # Next let's split up all the tags into their own strings
+        if m.captures[2] != nothing
+            tag_regex = r"!([\S]+)"
+            tags = [z.captures[1] for z in eachmatch(tag_regex, m.captures[2])]
+
+            # Parse out any tags we're interested in
+            for tag in tags
+                if tag == "nuke"
+                    should_nuke = true
+                elseif startswith(tag, "filter=") && length(tag) > 8
+                    builder_filter = tag[8:end]
+                end
+            end
+        end
+
+        # Finally, parse out the code block if it exists
+        if m.captures[3] != nothing
+            code_block = strip(m.captures[3])
         end
 
         # Only add this guy if he doesn't already exist in the list of commands
-        if isempty(filter(x -> x.gitsha == gitsha, commands)) && verify_gitsha(gitsha)
-            push!(commands,JLBuildCommand(gitsha, code_block))
+        new_cmd = JLBuildCommand(gitsha=gitsha, code=code_block; should_nuke = should_nuke,
+                                 builder_filter = builder_filter)
+        if isempty(filter(x -> x == new_cmd, commands))
+            push!(commands, new_cmd)
         end
     end
 
