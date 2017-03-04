@@ -1,5 +1,11 @@
-using MySQL, DataFrames
+using MySQL, DataFrames # DataFrames for NAType
 
+# This file contains my database management layer.  Types get slapped into their
+# own databases, governed by their own create_schema(::Type{T}) functions, and
+# are serialized/deserialized through their own sql_fields(::Type{T}) functions.
+# Everything else should be pretty much automatic, save objects to the DB with
+# dbsave(), query for objects with dbload().  If there is special logic that
+# needs to be run after a dbload(), do so within dbload_posthook!(x::T).
 
 db_connection = nothing
 function db_login()
@@ -32,70 +38,6 @@ function execute_or_die(command::AbstractString; verbose=false, login_retry = 0)
     end
 end
 
-# Schema for a JLBuildCommand.  Just gitsha and code
-function create_schema(::Type{JLBuildCommand})
-    return """
-        gitsha CHAR(40) NOT NULL,
-        code MEDIUMTEXT NOT NULL,
-        submitted BOOLEAN NOT NULL,
-        repo_name TEXT NOT NULL,
-        comment_id INT NOT NULL,
-        comment_place TEXT NOT NULL,
-        comment_type TEXT NOT NULL,
-        comment_url TEXT NOT NULL,
-        should_nuke BOOLEAN NOT NULL,
-        builder_filter TEXT NOT NULL,
-        PRIMARY KEY (gitsha, comment_id)
-    """
-end
-
-function sql_fields(::Type{JLBuildCommand})
-    return (
-        :gitsha,
-        :code,
-        :submitted,
-        :repo_name,
-        :comment_id,
-        :comment_place,
-        :comment_type,
-        :comment_url,
-        :should_nuke,
-        :builder_filter,
-    )
-end
-
-# Schema for a buildbot job.  Has a foreignkey that points to its parent
-# JLBuildCommand, pointed to by its gitsha, which just so happens to be the
-# primary key of the JLBuildCommand table
-function create_schema(::Type{BuildbotJob})
-    return """
-        gitsha CHAR(40) NOT NULL,
-        comment_id INT NOT NULL,
-        nuke_buildrequest_id INT NOT NULL,
-        nuke_done BOOL NOT NULL,
-        builder_id INT NOT NULL,
-        buildrequest_id INT NOT NULL,
-        build_done BOOLEAN NOT NULL,
-        code_buildrequest_id INT NOT NULL,
-        code_done BOOLEAN NOT NULL,
-        PRIMARY KEY (gitsha, builder_id, buildrequest_id),
-        CONSTRAINT fk_cmd FOREIGN KEY (gitsha, comment_id) REFERENCES JLBuildCommand (gitsha, comment_id)
-    """
-end
-
-function sql_fields(::Type{BuildbotJob})
-    return (
-        :gitsha,
-        :comment_id,
-        :nuke_buildrequest_id,
-        :nuke_done,
-        :builder_id,
-        :buildrequest_id,
-        :build_done,
-        :code_buildrequest_id,
-        :code_done
-    )
-end
 
 function table_exists(table_name::AbstractString)
     result = execute_or_die("""
@@ -108,7 +50,7 @@ function table_exists(table_name::AbstractString)
 end
 
 function create_tables()
-    for name in [:JLBuildCommand, :BuildbotJob]
+    for name in [:JLBuildCommand, :NukeJob, :BuildJob, :CodeJob, :BinaryRecord]
         @eval begin
             if !table_exists($("$name"))
                 log($("Creating table $name because it didn't exist before..."))
@@ -117,7 +59,7 @@ function create_tables()
                         $(create_schema($name))
                     )
                 """
-                execute_or_die(cmd)
+                execute_or_die(cmd; login_retry=10)
             end
         end
     end
@@ -179,17 +121,15 @@ function dbload{T}(::Type{T}; verbose=false, kwargs...)
         push!(result, T(;args...))
     end
 
-    # Because we can't do fancy invoke stuff with keyword arguments on 0.5 in
-    # order to override the base behavior of dbload(), just do "manual dispatch"
-    if T <: JLBuildCommand
-        for idx in 1:length(result)
-            result[idx].jobs = dbload(
-                BuildbotJob,
-                gitsha = result[idx].gitsha,
-                comment_id = result[idx].comment_id
-            )
-        end
+    for idx in 1:length(result)
+        dbload_posthook!(result[idx]; verbose=verbose)
     end
 
     return result
+end
+
+function dbload_posthook!(dummy; verbose=false)
+    # We do nothing in the normal case, override dbload_posthook for your own
+    # types to do something interesting here.  Look at JLBuildcommand for an
+    # example.
 end

@@ -13,7 +13,7 @@ stop:
 	docker-compose down --remove-orphans
 
 shell:
-	docker-compose run --service-ports app /bin/bash
+	docker-compose run --service-ports app julia -L shell.jl
 
 log: logs
 logs:

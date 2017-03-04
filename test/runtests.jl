@@ -3,11 +3,11 @@ include("../src/jlbuild.jl")
 using jlbuild
 
 # Mockup some internal datastructures with testing data
-builder_suffixes = ["linux64", "osx64", "win32", "linuxarmv7l"]
-for idx in 1:length(builder_suffixes)
-    jlbuild.julia_builder_ids[idx]      = "package_$(builder_suffixes[idx])"
-    jlbuild.coderunner_builder_ids[idx] = "code_run_$(builder_suffixes[idx])"
-    jlbuild.nuke_builder_ids[idx]       = "nuke_$(builder_suffixes[idx])"
+suffixes = ["linux64", "osx64", "win32", "linuxarmv7l"]
+for idx in 1:length(suffixes)
+    jlbuild.build_builder_ids[idx] = "package_$(suffixes[idx])"
+    jlbuild.code_builder_ids[idx]  = "code_run_$(suffixes[idx])"
+    jlbuild.nuke_builder_ids[idx]  = "nuke_$(suffixes[idx])"
 end
 
 # First, test that we are able to probe gitshas properly
@@ -107,18 +107,18 @@ $cmd_code
     @test parse_commands("@jlbuild $test_gitsha !nuke")[1].should_nuke
     @test isempty(parse_commands("@jlbuild !nuke $test_gitsha"))
 
+    # Test rebuild tag works properly
+    @test parse_commands("@jlbuild $test_gitsha !rebuild")[1].force_rebuild
+
     # Test filter tag works
     cmd = parse_commands("@jlbuild $test_gitsha !filter=osx,win")[1]
     @test cmd.builder_filter == "osx,win"
-    builder_ids = collect(1:4)
-    filt_builder_ids = builder_filter(cmd, builder_ids)
-    @test builder_name.(filt_builder_ids) == ["package_osx64", "package_win32"]
+    @test builder_suffixes(cmd) == ["osx64", "win32"]
 
     # Test two tags together works
     cmd = parse_commands("@jlbuild $test_gitsha !nuke !filter=linux64")[1]
     @test cmd.should_nuke
     @test cmd.builder_filter == "linux64"
-    @test builder_name.(builder_filter(cmd, builder_ids)) == ["package_linux64"]
 
     # Test parsing of a large comment
     @test [c.gitsha for c in parse_commands(long_gitsha_test)] == long_gitshas

@@ -23,7 +23,7 @@ function update_julia_repo()
     return repo
 end
 
-function normalize_gitsha(gitsha::AbstractString)
+function get_git_commit(gitsha::AbstractString)
     # First, lookup this gitsha in the repo
     repo = get_julia_repo()
     git_commit = LibGit2.get(LibGit2.GitCommit, repo, gitsha)
@@ -31,8 +31,32 @@ function normalize_gitsha(gitsha::AbstractString)
     if git_commit === nothing
         throw(ArgumentError("gitsha $gitsha was not found in the repository"))
     end
+    return git_commit
+end
 
-    return hex(LibGit2.Oid(git_commit))
+function normalize_gitsha(gitsha::AbstractString)
+    return hex(LibGit2.Oid(get_git_commit(gitsha)))
+end
+
+function short_gitsha(gitsha::AbstractString)
+    repo = get_julia_repo()
+
+    # Wow this is so hacky
+    for len in 7:length(gitsha)
+        try
+            LibGit2.get(LibGit2.GitCommit, repo, gitsha)
+            return gitsha[1:len]
+        end
+    end
+end
+
+function get_julia_majmin(gitsha::AbstractString)
+    # <3 @simonbyrne is the best <3
+    repo = get_julia_repo()
+    blob = LibGit2.GitBlob(LibGit2.revparse(repo, "$gitsha:VERSION").ptr)
+    v = VersionNumber(unsafe_string(convert(Ptr{UInt8}, LibGit2.content(blob))))
+
+    return "$(v.major).$(v.minor)"
 end
 
 function verify_gitsha(cmd::JLBuildCommand; auto_update::Bool = true)
@@ -167,6 +191,7 @@ function parse_commands(body::AbstractString; default_commit="")
         # Initialize options to defaults
         gitsha = default_commit
         should_nuke = false
+        force_rebuild = false
         builder_filter = ""
         code_block = ""
 
@@ -190,6 +215,8 @@ function parse_commands(body::AbstractString; default_commit="")
             for tag in tags
                 if tag == "nuke"
                     should_nuke = true
+                elseif tag == "rebuild"
+                    force_rebuild = true
                 elseif startswith(tag, "filter=") && length(tag) > 8
                     builder_filter = tag[8:end]
                 end
@@ -206,7 +233,8 @@ function parse_commands(body::AbstractString; default_commit="")
             gitsha = gitsha,
             code = code_block,
             should_nuke = should_nuke,
-            builder_filter = builder_filter
+            force_rebuild = force_rebuild,
+            builder_filter = builder_filter,
         ))
     end
 

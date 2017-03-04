@@ -57,8 +57,9 @@ function buildbot_login()
     return nothing
 end
 
-function list_forceschedulers!(mapping::Dict{Int64,String}, scheduler_name::AbstractString; name_prefix::AbstractString = "")
-    # Get the force_julia_package builder names
+function list_forceschedulers!(mapping::Dict{Int64,String},
+                               scheduler_name::AbstractString;
+                               name_prefix::AbstractString = "")
     res = get_or_die("$buildbot_base/api/v2/forceschedulers")
     data = JSON.parse(readstring(res.body))["forceschedulers"]
     names = first(z["builder_names"] for z in data if z["name"] == scheduler_name)
@@ -75,125 +76,182 @@ function list_forceschedulers!(mapping::Dict{Int64,String}, scheduler_name::Abst
     return nothing
 end
 
-const julia_builder_ids = Dict{Int64,String}()
-function list_julia_forceschedulers!()
-    global julia_builder_ids
-    list_forceschedulers!(julia_builder_ids, "force_julia_package"; name_prefix="package_")
+# Generate list_build_forceschedulers!() and friends...
+for (name, scheduler_name, name_prefix, job_type) in [
+    (:build, "package", "package_", BuildJob),
+    (:code, "run_code", "", CodeJob),
+    (:nuke, "nuke", "", NukeJob)]
+    list_name = Symbol(name, "_builder_ids")
+    force_name = Symbol("list_", name, "_forceschedulers!")
+    @eval begin
+        const $list_name = Dict{Int64,String}()
+        function $force_name()
+            global $list_name
+            list_forceschedulers!($list_name, $scheduler_name;
+                                  name_prefix = $name_prefix)
+        end
+
+        function builder_name(job::$job_type)
+            global $list_name
+            if isempty($list_name)
+                $force_name()
+            end
+            return $list_name[job.builder_id]
+        end
+
+        function builder_suffix(job::$job_type)
+            name = builder_name(job)
+            return name[rsearch(name, '_')+1:end]
+        end
+    end
 end
 
-const coderunner_builder_ids = Dict{Int64,String}()
-function list_runcode_forceschedulers!()
-    global coderunner_builder_ids
-    list_forceschedulers!(coderunner_builder_ids, "run_code")
+function builder_suffix(list, builder_id)
+    name = list[builder_id]
+    return name[rsearch(name, '_')+1:end]
 end
 
-const nuke_builder_ids = Dict{Int64,String}()
-function list_nuke_forceschedulers!()
-    global nuke_builder_ids
-    list_forceschedulers!(nuke_builder_ids, "nuke")
-end
-
-function matching_builder(builder_list, name_suffix)
-    return first(k for (k,v) in builder_list if endswith(v,name_suffix))
+function matching_builder(new_list, old_list, old_builder_id)
+    name_suffix = builder_suffix(old_list, old_builder_id)
+    return first(k for (k,v) in new_list if endswith(v, name_suffix))
 end
 
 
-const forcebuild_url = "$buildbot_base/api/v2/forceschedulers/force_julia_package"
-const nuke_url = "$buildbot_base/api/v2/forceschedulers/nuke"
+function builder_url(job::BuildJob)
+    global buildbot_base
+    return "$buildbot_base/#/builders/$(job.builder_id)"
+end
+
+
 """
-`submit_buildcommand!(cmd::JLBuildCommand)`
+`get_resource(resource::AbstractString; kwargs...)`
+
+Gets a Buildbot resource such as "builders" or "buildrequests", passing in the
+given keyword arguments as parameters to filter down the results.  Example:
+
+data = get_resource("builders"; buildrequest_id=10)
+"""
+function get_resource(resource::AbstractString; kwargs...)
+    global buildbot_base
+    params = Dict{String,Any}("property" => "*")
+    for (k, v) in kwargs
+        params[string(k)] = v
+    end
+
+    res = get_or_die("$buildbot_base/api/v2/$resource"; query=params)
+    return JSON.parse(readstring(res.body))[resource]
+end
+
+const forcebuild_url = "$buildbot_base/api/v2/forceschedulers/package"
+const forcenuke_url = "$buildbot_base/api/v2/forceschedulers/nuke"
+const forcecode_url = "$buildbot_base/api/v2/forceschedulers/run_code"
+
+"""
+`submit_jlbc!(cmd::JLBuildCommand)`
 
 Given a `JLBuildCommand`, submit it to the buildbot and create a bunch of job
-objects tracking the state of each builder's work.  These will be stored within
-`cmd.jobs`.
-
-If `cmd.jobs` already exists, it will be heartlessly overwritten with no regard
-for the jobs that already existed.
+objects tracking the state of each builder's work.
 """
-function submit_buildcommand!(cmd::JLBuildCommand)
-    global forcebuild_url, julia_builder_ids
+function submit_jlbc!(cmd::JLBuildCommand)
+    global forcebuild_url, nuke_builder_ids, build_builder_ids, code_builder_ids
 
     # initialize the list of builder ids we're interested in every time.  We
     # don't want to fall behind the times if the buildbot topology changes.
-    list_julia_forceschedulers!()
-
+    list_build_forceschedulers!()
     if cmd.should_nuke
         list_nuke_forceschedulers!()
     end
+    if !isempty(cmd.code)
+        list_code_forceschedulers!()
+    end
 
-    job_list = BuildbotJob[]
-    for builder_id in builder_filter(cmd, keys(julia_builder_ids))
+    for builder_id in builder_filter(cmd)
         # If we should nuke before building, put the buildrequest in!
         nuke_buildrequest_id = 0
         if cmd.should_nuke
-            name_suffix = builder_name_suffix(builder_id)
-            nuke_builderid = matching_builder(nuke_builder_ids, name_suffix)
-            data = JSON.json(Dict(
-                "id" => 1,
-                "method" => "force",
-                "jsonrpc" => "2.0",
-                "params" => Dict(
-                    "builderid" => nuke_builderid,
-                ),
-            ))
-
-            res = post_or_die(nuke_url; body=data)
-            nuke_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+            nuke_builderid = matching_builder(nuke_builder_ids, build_builder_ids, builder_id)
+            submit_nuke!(cmd.gitsha, cmd.comment_id, nuke_builderid)
+            continue
         end
 
-        data = JSON.json(Dict(
-            "id" => 1,
-            "method" => "force",
-            "jsonrpc" => "2.0",
-            "params" => Dict(
-                "revision" => cmd.gitsha,
-                "builderid" => builder_id,
-            ),
-        ))
+        # Check to see if we actually need to build.
+        name_suffix = builder_suffix(build_builder_ids, builder_id)
+        should_build = cmd.force_rebuild || isempty(dbload(BinaryRecord; gitsha=cmd.gitsha, builder_suffix=name_suffix))
 
-        res = post_or_die(forcebuild_url; body=data)
-        buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
-        job = BuildbotJob(;
-            gitsha=cmd.gitsha,
-            builder_id=builder_id,
-            buildrequest_id=buildrequest_id,
-            comment_id=cmd.comment_id,
-            nuke_buildrequest_id=nuke_buildrequest_id,
-        )
-        push!(job_list, job)
-        dbsave(job)
-        log("Initiated build of $(cmd.gitsha[1:10]) on $(builder_name(job))")
+        if should_build
+            submit_build!(cmd.gitsha, cmd.comment_id, builder_id)
+            continue
+        end
+
+        # Lastly, if we've made it this far and we've got code, start it running
+        if !isempty(cmd.code)
+            code_builderid = matching_builder(code_builder_ids, build_builder_ids, builder_id)
+            submit_code!(cmd, code_builderid)
+        end
     end
 
-    cmd.jobs = job_list
-    cmd.submitted = true
-
     # Save out this command after updating it
+    cmd.submitted = true
     dbsave(cmd)
     return cmd
 end
 
-const forcecode_url = "$buildbot_base/api/v2/forceschedulers/run_code"
-function submit_coderun!(cmd::JLBuildCommand, job::BuildbotJob)
-    global forcecode_url, coderunner_builder_ids
+function submit_nuke!(gitsha, comment_id, builder_id)
+    global forcenuke_url
+    data = JSON.json(Dict(
+        "id" => 1,
+        "method" => "force",
+        "jsonrpc" => "2.0",
+        "params" => Dict(
+            "builderid" => builder_id,
+        ),
+    ))
 
-    # Initialize the list of builder ids we're interested in
-    list_runcode_forceschedulers!();
+    res = post_or_die(forcenuke_url; body=data)
+    buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
 
-    builds = get_builds(job.buildrequest_id)
-    if isempty(builds)
-        log("Empty build properties on buildrequest $(buildrequest_id)!")
-        return
-    end
+    nuke_job = NukeJob(;
+        gitsha = gitsha,
+        comment_id = comment_id,
+        builder_id = builder_id,
+        buildrequest_id = buildrequest_id
+    )
+    dbsave(nuke_job)
+    log("Initiated Nuke on $(builder_name(nuke_job))")
+end
 
-    data = builds[1]
-    props = Dict(k=>data["properties"][k][1] for k in keys(data["properties"]))
-    majmin = props["majmin"]
-    shortcommit = props["shortcommit"]
+function submit_build!(gitsha, comment_id, builder_id)
+    global forcebuild_url
+    data = JSON.json(Dict(
+        "id" => 1,
+        "method" => "force",
+        "jsonrpc" => "2.0",
+        "params" => Dict(
+            "revision" => gitsha,
+            "builderid" => builder_id,
+        ),
+    ))
 
-    # Find the builder that matches the packager this was built on
-    name_suffix = builder_name_suffix(job)
-    builder_id = matching_builder(coderunner_builder_ids, name_suffix)
+    res = post_or_die(forcebuild_url; body=data)
+    buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+    build_job = BuildJob(;
+        gitsha = gitsha,
+        builder_id = builder_id,
+        buildrequest_id = buildrequest_id,
+        comment_id = comment_id
+    )
+    dbsave(build_job)
+    shortsha = short_gitsha(gitsha)
+    log("Initiated build of $shortsha on $(builder_name(build_job))")
+end
+
+function submit_code!(cmd::JLBuildCommand, builder_id)
+    global forcecode_url
+
+    majmin = get_julia_majmin(cmd.gitsha)
+    # Ha. Ha ha.  Ha ha ha ha.  Ohh I was too clever for myself by half.
+    #shortcommit = short_gitsha(cmd.gitsha)
+    shortcommit = cmd.gitsha[1:10]
 
     data = JSON.json(Dict(
         "id" => 1,
@@ -207,7 +265,145 @@ function submit_coderun!(cmd::JLBuildCommand, job::BuildbotJob)
         ),
     ))
     res = post_or_die(forcecode_url; body=data)
-    job.code_buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
-    dbsave(job)
-    return job
+
+    code_job = CodeJob(;
+        gitsha = cmd.gitsha,
+        comment_id = cmd.comment_id,
+        builder_id = builder_id,
+        buildrequest_id = JSON.parse(readstring(res.body))["result"][1],
+        code = cmd.code
+    )
+    dbsave(code_job)
+    return code_job
+end
+
+function submit_next_job!(job::NukeJob)
+    # A Nuke job turns into a Build job, always
+    builder_id = matching_builder(build_builder_ids, nuke_builder_ids, job.builder_id)
+    submit_build!(job.gitsha, job.comment_id, builder_id)
+end
+
+function submit_next_job!(job::BuildJob)
+    cmd = JLBuildCommand(job)
+
+    # So we just finished a BuildJob.  Let's wrap this guy up in a BinaryRecord
+    # and get on our way
+    br = BinaryRecord(gitsha=cmd.gitsha, builder_suffix=builder_suffix(job))
+    dbsave(br)
+
+    # A build job turns into a code job if the code is not empty
+    if !isempty(cmd.code)
+        builder_id = matching_builder(code_builder_ids, build_builder_ids, job.builder_id)
+        submit_code!(cmd, builder_id)
+    end
+end
+
+function submit_next_job!(job::CodeJob)
+    # We are all done!!!!
+end
+
+
+
+
+"""
+`buildrequest_url(buildrequest_id)`
+
+Given the `buildrequest_id`, construct the URL to the actual buildbot page.
+"""
+function buildrequest_url(buildrequest_id::Int64)
+    global buildbot_base
+    return "$(buildbot_base)/#/buildrequests/$(buildrequest_id)"
+end
+
+"""
+`build_url(builder_id, build_number)`
+
+Given the `builder_id` and `build_number` from the JSON payload of a
+`buildrequest` response, construct the URL to the actual buildbot build page.
+"""
+function build_url(builder_id::Int64, build_number::Int64)
+    global buildbot_base
+    return "$(buildbot_base)/#/builders/$(builder_id)/builds/$(build_number)"
+end
+
+"""
+`status(buildrequest_id::Int64)`
+
+Return a dictionary summarizing the status of this buildbot job. Contains useful
+information such as `"status"`, which is one of `"complete"`, `"building"`,
+`"canceled"`, `"pending"` or `"errored"`. `"build_url"` which points
+`buildbot_job_url()`, and `"started_at"` if that makes sense for the status.
+"""
+function get_status(buildrequest_id::Int64)
+    builds = get_resource("builds"; buildrequestid=buildrequest_id)
+    if isempty(builds)
+        # check to make sure that the buildrequest itself wasn't canceled
+        try
+            data = get_resource("buildrequests"; buildrequestid=buildrequest_id)
+
+            # If data["complete"], then this build was canceled
+            if data[1]["complete"]
+                return Dict(
+                    "status" => "canceled",
+                    "result" => 5,
+                    "build_url" => buildrequest_url(buildrequest_id),
+                    "start_time" => 0,
+                    "data" => data,
+                )
+            end
+        end
+
+        # Default is to say it's still pending
+        return Dict(
+            "status" => "pending",
+            "result" => -1,
+            "build_url" => buildrequest_url(buildrequest_id),
+            "start_time" => 0,
+            "data" => builds,
+        )
+    end
+
+    data = builds[1]
+    status_name = ""
+    if data["complete"]
+        if data["results"] == 0
+            # We completed successfully
+            status_name = "complete"
+        else
+            # We completed with errors
+            status_name = "errored"
+        end
+    else
+        # We are still building
+        status_name = "building"
+    end
+
+    return Dict(
+        "status" => status_name,
+        "result" => data["results"],
+        "build_url" => build_url(data["builderid"], data["number"]),
+        "start_time" => data["started_at"],
+        "data" => data,
+    )
+end
+
+"""
+`download_url(data::Dict)`
+
+Constructs the Amazon S3 download url from buildrequest data
+"""
+function download_url(data::Dict)
+    global download_base
+    props = Dict(k=>data["properties"][k][1] for k in keys(data["properties"]))
+
+    propkeys = ["os_name", "up_arch", "upload_filename"]
+    if !all(haskey(props, key) for key in propkeys)
+        return ""
+    end
+
+    os = props["os_name"]
+    up_arch = props["up_arch"]
+    majmin = props["majmin"]
+    filename = props["upload_filename"]
+    return "$download_base/test/bin/$os/$up_arch/$majmin/$filename"
 end
