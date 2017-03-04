@@ -369,6 +369,9 @@ function get_status(buildrequest_id::Int64)
         if data["results"] == 0
             # We completed successfully
             status_name = "complete"
+        elif data["results"] == 6
+            # The build itself was canceled.  INTERESTING.
+            status_name = "canceled"
         else
             # We completed with errors
             status_name = "errored"
