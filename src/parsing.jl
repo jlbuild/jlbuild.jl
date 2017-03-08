@@ -86,7 +86,6 @@ end
 function verify_sender(event)
     username = get(event.sender.login)
     if username == "jlbuild"
-        log("Ignoring self-made comment")
         return false
     end
 
