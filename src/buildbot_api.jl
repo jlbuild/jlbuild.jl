@@ -284,7 +284,7 @@ function submit_next_job!(job::NukeJob)
 
     # A Nuke job turns into a Build job, always
     builder_id = matching_builder(build_builder_ids, nuke_builder_ids, job.builder_id)
-    flags = extra_make_flags(cmd)
+    flags = join(extra_make_flags(cmd), " ")
     submit_build!(cmd.gitsha, flags, cmd.comment_id, builder_id)
 end
 
