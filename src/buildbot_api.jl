@@ -179,7 +179,8 @@ function submit_jlbc!(cmd::JLBuildCommand)
         should_build = cmd.force_rebuild || isempty(dbload(BinaryRecord; gitsha=cmd.gitsha, builder_suffix=name_suffix))
 
         if should_build
-            submit_build!(cmd.gitsha, cmd.comment_id, builder_id)
+            flags = extra_make_flags(cmd)
+            submit_build!(cmd.gitsha, flags, cmd.comment_id, builder_id)
             continue
         end
 
@@ -220,7 +221,7 @@ function submit_nuke!(gitsha, comment_id, builder_id)
     log("Initiated Nuke on $(builder_name(nuke_job))")
 end
 
-function submit_build!(gitsha, comment_id, builder_id)
+function submit_build!(gitsha, extra_make_flags, comment_id, builder_id)
     global forcebuild_url
     data = JSON.json(Dict(
         "id" => 1,
@@ -228,6 +229,7 @@ function submit_build!(gitsha, comment_id, builder_id)
         "jsonrpc" => "2.0",
         "params" => Dict(
             "revision" => gitsha,
+            "extra_make_flags" => extra_make_flags,
             "builderid" => builder_id,
         ),
     ))
@@ -278,9 +280,12 @@ function submit_code!(cmd::JLBuildCommand, builder_id)
 end
 
 function submit_next_job!(job::NukeJob)
+    cmd = JLBuildCommand(job)
+
     # A Nuke job turns into a Build job, always
     builder_id = matching_builder(build_builder_ids, nuke_builder_ids, job.builder_id)
-    submit_build!(job.gitsha, job.comment_id, builder_id)
+    flags = extra_make_flags(cmd)
+    submit_build!(cmd.gitsha, flags, cmd.comment_id, builder_id)
 end
 
 function submit_next_job!(job::BuildJob)

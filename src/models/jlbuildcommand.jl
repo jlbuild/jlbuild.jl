@@ -12,6 +12,7 @@ type JLBuildCommand
 
     # Flags we can set
     builder_filter::String
+    extra_make_flags::String
     should_nuke::Bool
     force_rebuild::Bool
 end
@@ -20,12 +21,13 @@ end
 function JLBuildCommand(;gitsha="", code="", submitted = false, repo_name = "",
                          comment_id = 0, comment_place = "unknown",
                          comment_type = :unknown, comment_url = "",
-                         builder_filter = "", should_nuke = false,
-                         force_rebuild = false)
+                         builder_filter = "", extra_make_flags="",
+                         should_nuke = false, force_rebuild = false)
     # Construct the object
     return JLBuildCommand(gitsha, code, submitted, repo_name, comment_id,
                           comment_place, comment_type, comment_url,
-                          builder_filter, should_nuke, force_rebuild)
+                          builder_filter, extra_make_flags, should_nuke,
+                          force_rebuild)
 end
 
 # Schema for a JLBuildCommand.  Just gitsha and code
@@ -40,6 +42,7 @@ function create_schema(::Type{JLBuildCommand})
         comment_type TEXT NOT NULL,
         comment_url TEXT NOT NULL,
         builder_filter TEXT NOT NULL,
+        extra_make_flags TEXT NOT NULL,
         should_nuke BOOLEAN NOT NULL,
         force_rebuild BOOLEAN NOT NULL,
         PRIMARY KEY (gitsha, comment_id)
@@ -57,6 +60,7 @@ function sql_fields(::Type{JLBuildCommand})
         :comment_type,
         :comment_url,
         :builder_filter,
+        :extra_make_flags,
         :should_nuke,
         :force_rebuild,
     )
@@ -111,6 +115,9 @@ function builder_suffixes(cmd::JLBuildCommand)
     return sort([builder_suffix(build_builder_ids, b) for b in builder_ids])
 end
 
+function extra_make_flags(cmd::JLBuildCommand)
+    return split(cmd.extra_make_flags, ",")
+end
 
 function get_status(cmd::JLBuildCommand)
     # First, get list of builder suffixes

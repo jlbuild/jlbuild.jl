@@ -192,6 +192,7 @@ function parse_commands(body::AbstractString; default_commit="")
         gitsha = default_commit
         should_nuke = false
         force_rebuild = false
+        extra_make_flags = ""
         builder_filter = ""
         code_block = ""
 
@@ -217,6 +218,8 @@ function parse_commands(body::AbstractString; default_commit="")
                     should_nuke = true
                 elseif tag == "rebuild"
                     force_rebuild = true
+                elseif startswith(tag, "flags=") && length(tag) > 7
+                    extra_make_flags = tag[7:end]
                 elseif startswith(tag, "filter=") && length(tag) > 8
                     builder_filter = tag[8:end]
                 end
@@ -235,6 +238,7 @@ function parse_commands(body::AbstractString; default_commit="")
             should_nuke = should_nuke,
             force_rebuild = force_rebuild,
             builder_filter = builder_filter,
+            extra_make_flags = extra_make_flags,
         ))
     end
 

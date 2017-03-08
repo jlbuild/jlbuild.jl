@@ -5,7 +5,8 @@ using HTTP, JSON
 export run_server, JLBuildCommand, NukeJob, BuildJob, CodeJob, binaryrecord,
        dbload, dbsave, verify_gitsha, parse_commands, normalize_gitsha,
        builder_filter, builder_name, builder_suffixes, get_status,
-       update_status, nuke_jobs, build_jobs, code_jobs, get_resource
+       update_status, nuke_jobs, build_jobs, code_jobs, get_resource,
+       extra_make_flags
 
 include("logging.jl")
 include("models/jobcommon.jl")

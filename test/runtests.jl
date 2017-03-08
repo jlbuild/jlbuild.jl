@@ -107,6 +107,16 @@ $cmd_code
     @test parse_commands("@jlbuild $test_gitsha !nuke")[1].should_nuke
     @test isempty(parse_commands("@jlbuild !nuke $test_gitsha"))
 
+    # Test flags tag works properly
+    flags = "DEPS_GIT=1,OPENBLAS_BRANCH=develop,OPENBLAS_SHA1=4227049c7d"
+    cmd = parse_commands("@jlbuild $test_gitsha !flags=$flags")[1]
+    @test cmd.extra_make_flags == flags
+    @test extra_make_flags(cmd) == [
+        "DEPS_GIT=1",
+        "OPENBLAS_BRANCH=develop",
+        "OPENBLAS_SHA1=4227049c7d",
+    ]
+
     # Test rebuild tag works properly
     @test parse_commands("@jlbuild $test_gitsha !rebuild")[1].force_rebuild
 
