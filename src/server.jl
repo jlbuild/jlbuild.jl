@@ -83,26 +83,30 @@ end
 
 function comment!(cmd::JLBuildCommand, msg::AbstractString)
     global github_auth
-    if cmd.comment_id == 0
-        comment = GitHub.create_comment(
-            get_repo(cmd.repo_name),
-            cmd.comment_place,
-            cmd.comment_type,
-            auth = github_auth,
-            params = Dict("body" => strip(msg))
-        )
-        cmd.comment_id = get(comment.id)
-        cmd.comment_url = string(get(comment.html_url))
-        log("Creating comment $(cmd.comment_url)")
-    else
-        GitHub.edit_comment(
-            get_repo(cmd.repo_name),
-            cmd.comment_id,
-            cmd.comment_type,
-            auth = github_auth,
-            params = Dict("body" => strip(msg))
-        )
-        log("Updating comment $(cmd.comment_url)")
+    try
+        if cmd.comment_id == 0
+            comment = GitHub.create_comment(
+                get_repo(cmd.repo_name),
+                cmd.comment_place,
+                cmd.comment_type,
+                auth = github_auth,
+                params = Dict("body" => strip(msg))
+            )
+            cmd.comment_id = get(comment.id)
+            cmd.comment_url = string(get(comment.html_url))
+            log("Creating comment $(cmd.comment_url)")
+        else
+            GitHub.edit_comment(
+                get_repo(cmd.repo_name),
+                cmd.comment_id,
+                cmd.comment_type,
+                auth = github_auth,
+                params = Dict("body" => strip(msg))
+            )
+            log("Updating comment $(cmd.comment_url)")
+        end
+    catch
+        log("Couldn't create/update comment $(cmd.comment_url)")
     end
 end
 
