@@ -7,12 +7,17 @@ run:
 build:
 	docker-compose build --pull
 
-down: stop
 stop:
+	docker-compose stop
+
+down:
 	docker-compose down --remove-orphans
 
-shell:
+runshell:
 	docker-compose run --service-ports app julia -L shell.jl
+
+shell:
+	docker-compose exec app julia -L shell.jl
 
 log: logs
 logs:
