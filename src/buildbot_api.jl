@@ -197,6 +197,26 @@ function submit_jlbc!(cmd::JLBuildCommand)
     return cmd
 end
 
+"""
+`response_buildrequest_id(res, builder_id)`
+
+Parse and validate the JSON from a buildbot submission response.
+"""
+function response_buildrequest_id(res, builder_id)
+    json = JSON.parse(readstring(res.body))
+    if !haskey(json, "result")
+        throw("ERR: Buildbot response didn't contain \"results\" key!")
+    end
+
+    results = json["result"]
+    if !haskey(results[2], string(builder_id))
+        a = first(results[2])[1]
+        b = builder_id
+        log("WARN: Buildbot response is for builder_id $a when we were expecting $b. Continuing anyway...")
+    end
+    return first(results[2])[2]
+end
+
 function submit_nuke!(gitsha, comment_id, builder_id)
     global forcenuke_url
     data = JSON.json(Dict(
@@ -209,7 +229,7 @@ function submit_nuke!(gitsha, comment_id, builder_id)
     ))
 
     res = post_or_die(forcenuke_url; body=data)
-    buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+    buildrequest_id = response_buildrequest_id(res, builder_id)
 
     nuke_job = NukeJob(;
         gitsha = gitsha,
@@ -235,7 +255,7 @@ function submit_build!(gitsha, extra_make_flags, comment_id, builder_id)
     ))
 
     res = post_or_die(forcebuild_url; body=data)
-    buildrequest_id = JSON.parse(readstring(res.body))["result"][1]
+    buildrequest_id = response_buildrequest_id(res, builder_id)
     build_job = BuildJob(;
         gitsha = gitsha,
         builder_id = builder_id,
@@ -272,7 +292,7 @@ function submit_code!(cmd::JLBuildCommand, builder_id)
         gitsha = cmd.gitsha,
         comment_id = cmd.comment_id,
         builder_id = builder_id,
-        buildrequest_id = JSON.parse(readstring(res.body))["result"][1],
+        buildrequest_id = response_buildrequest_id(res, builder_id),
         code = cmd.code
     )
     dbsave(code_job)
