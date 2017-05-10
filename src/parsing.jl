@@ -149,6 +149,9 @@ function get_event_body(event::GitHub.WebhookEvent)
     try
         return event.payload["pull_request"]["body"]
     end
+    try
+        return event.payload["issue"]["body"]
+    end
     log("could not get comment body from event of type $(get_event_type(event))")
     return ""
 end
