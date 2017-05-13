@@ -20,4 +20,6 @@ Tags are used to alter the default behavior of `jlbuild` somewhat.  As of this w
 
 * `!filter=x,y,z` filters the buildbots that will be scheduled.  Filters are comma-separated strings, where any builder that contains any of the filtering criterion will be included. Example: `@jlbuild !nuke !filter=linux64,win,ppc`.
 
+* `!flags=x,y,z` will add extra flags to the `make` invocation that builds julia.  Example: `@jlbuild !filter=arm !flags=BUILD_CUSTOM_LIBCXX=1,BUILD_LLVM_CLANG=1`.
+
 Finally, Julia code can be included to be run using the newly-built version of Julia.  Binary artifacts from the build will also be posted for easy access.
