@@ -2,7 +2,7 @@ import Base: showerror
 
 # Common buildbot things
 const buildbot_base = "https://buildog.julialang.org"
-const download_base = "https://julianightlies.s3.amazonaws.com"
+const download_base = "https://julialangnightlies.s3.amazonaws.com"
 const client = HTTP.Client()
 type BuildbotLoginError <: Exception end
 function showerror(io::IO, e::BuildbotLoginError)
