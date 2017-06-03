@@ -254,6 +254,7 @@ function github_callback(event::GitHub.WebhookEvent)
 
     @schedule begin
         # Save each cmd to the db
+        log("Launching cmd $(cmd)")
         for cmd in filt_commands
             update_comment(cmd)
         end

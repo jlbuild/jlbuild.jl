@@ -159,7 +159,6 @@ end
 function parse_commands(event::GitHub.WebhookEvent)
     # Grab the gitsha that this PR/review/whatever defaults to
     default_commit = get_event_sha(event)
-    log("  Got default_commit of $default_commit")
     body = get_event_body(event)
     cmds = parse_commands(body; default_commit=default_commit)
     for cmd in cmds
