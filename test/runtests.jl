@@ -25,7 +25,7 @@ short_gitsha = test_gitsha[1:10]
     @test !verify_gitsha("master"; auto_update=false)
 
     # Ensure tag names do work
-    @test verify_gitsha("v0.5.2"; auto_update=false)
+    @test verify_gitsha("v0.6.0-rc2"; auto_update=false)
 
     # Ensure truncated (and non-unique) gitshas do not work
     @test !verify_gitsha(test_gitsha[1:3]; auto_update=false)

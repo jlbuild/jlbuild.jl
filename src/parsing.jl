@@ -273,7 +273,7 @@ function parse_commands(body::AbstractString; default_commit="")
     # Build a capture group to find a gitsha or tag immediately after
     # `@jlbuild`. The gitsha can be enclosed within backticks, and the whole
     # thing is optional.
-    regex *= "(?:[ \\t]+`?([0-9a-zA-Z\./]+)`?)?"
+    regex *= "(?:[ \\t]+`?([0-9a-zA-Z\-\./]+)`?)?"
 
     # Build a group to find all tags that start with `!`
     regex *= "((?:[ \\t]+![^\\s]+)*)"
