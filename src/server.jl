@@ -75,7 +75,6 @@ function run_eventloop()
             # activity.  We do this down here so that we don't waste time and
             # rate limited resources updating the comment of a JLBC twice.
             cmd = dbload(JLBuildCommand; cmd_ref...)[1]
-            log("Updating comment for $(cmd)")
             update_comment(cmd)
         end
 
@@ -257,8 +256,8 @@ function github_callback(event::GitHub.WebhookEvent)
 
     @schedule begin
         # Save each cmd to the db
-        log("Launching cmd $(cmd)")
         for cmd in filt_commands
+            log("Launching $(cmd)")
             update_comment(cmd)
         end
     end
