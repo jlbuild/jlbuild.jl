@@ -12,6 +12,7 @@ end
 
 # First, test that we are able to probe gitshas properly
 test_gitsha = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
+v052_gitsha = "f4c6c9d4bbbd9587d84494e314f692c15ff1f9c0"
 short_gitsha = test_gitsha[1:10]
 @testset "gitsha verify" begin
     # Ensure a full gitsha works
@@ -23,6 +24,9 @@ short_gitsha = test_gitsha[1:10]
     # Ensure branch names do not work
     @test !verify_gitsha("master"; auto_update=false)
 
+    # Ensure tag names do work
+    @test verify_gitsha("v0.5.2"; auto_update=false)
+
     # Ensure truncated (and non-unique) gitshas do not work
     @test !verify_gitsha(test_gitsha[1:3]; auto_update=false)
 
@@ -33,6 +37,7 @@ end
 @testset "gitsha normalize" begin
     @test normalize_gitsha(test_gitsha) == test_gitsha
     @test normalize_gitsha(short_gitsha) == test_gitsha
+    @test normalize_gitsha("v0.5.2") == v052_gitsha
     @test_throws LibGit2.Error.GitError normalize_gitsha(test_gitsha[1:3])
 end
 
@@ -59,11 +64,18 @@ and then I will say another one:
 and then I will have a real one, both quoted and unquoted and short
 @jlbuild $test_gitsha
 @jlbuild `$short_gitsha`
+@jlbuild `v0.5.2`
 And a real one that is split
 @jlbuild
 78f3c82f92a3259f2372543ab8a7c4252fa2999f
 """
-long_gitshas = ["1a2b3c4d", "6a7b8c9d", test_gitsha, short_gitsha]
+long_gitshas = [
+    "1a2b3c4d",
+    "6a7b8c9d",
+    test_gitsha,
+    short_gitsha,
+    "v0.5.2",
+]
 
 # Test stuff for commands
 cmd_code = strip("""
@@ -93,10 +105,13 @@ $cmd_code
     @test isempty(parse_commands(""))
     @test isempty(parse_commands("@jlbuild"))
 
-    # Test simple one-off parsings, both within and without backticks
+    # Test simple one-off parsings, both with and without backticks
     @test parse_commands("@jlbuild $test_gitsha")[1].gitsha == test_gitsha
     @test parse_commands("@jlbuild \t $test_gitsha\n")[1].gitsha == test_gitsha
     @test parse_commands("@jlbuild `$test_gitsha`")[1].gitsha == test_gitsha
+    v052 = parse_commands("@jlbuild `v0.5.2`")[1]
+    @test v052.gitsha == "v0.5.2"
+    @test normalize_gitsha(v052.gitsha) == v052_gitsha
 
     # Test multiline parsing works, but not with something else preceeding the
     # command on the same line.

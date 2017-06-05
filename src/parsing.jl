@@ -1,4 +1,8 @@
+"""
+`get_julia_repo()`
 
+Return the `GitRepo` object that corresponds to our local Julia checkout.
+"""
 function get_julia_repo()
     # We maintain a julia repo in ../deps
     const julia_url = "https://github.com/JuliaLang/julia.git"
@@ -12,6 +16,12 @@ function get_julia_repo()
     return LibGit2.GitRepo(julia_repo_path)
 end
 
+
+"""
+`update_julia_repo()`
+
+Update the local Julia repository cache with new commits.
+"""
 function update_julia_repo()
     repo = get_julia_repo()
 
@@ -23,21 +33,45 @@ function update_julia_repo()
     return repo
 end
 
-function get_git_commit(gitsha::AbstractString)
-    # First, lookup this gitsha in the repo
+"""
+`get_git_commit(obj)`
+
+Given a git object (either a partial gitsha or a tag name) return the
+corresponding `GitCommit`` object according to the main Julia repository.
+"""
+function get_git_commit(obj::AbstractString)
     repo = get_julia_repo()
-    git_commit = LibGit2.get(LibGit2.GitCommit, repo, gitsha)
 
-    if git_commit === nothing
-        throw(ArgumentError("gitsha $gitsha was not found in the repository"))
+    # Check to see if this is already a commit
+    git_commit = LibGit2.get(LibGit2.GitCommit, repo, obj)
+    if git_commit != nothing
+        return git_commit
     end
-    return git_commit
+
+    # Next, see if it's a tag
+    try
+        tagref = LibGit2.GitReference(repo, "refs/tags/$(obj)")
+        return LibGit2.peel(LibGit2.GitCommit, tagref)
+    end
+    
+    throw(ArgumentError("git object $obj was not found in the repository"))
 end
 
-function normalize_gitsha(gitsha::AbstractString)
-    return hex(LibGit2.Oid(get_git_commit(gitsha)))
+"""
+`normalize_gitsha(obj)`
+
+Given a partial `gitsha` or git tag, return the full `gitsha` according to the
+main Julia repository.
+"""
+function normalize_gitsha(obj::AbstractString)
+    return hex(LibGit2.Oid(get_git_commit(obj)))
 end
 
+"""
+`short_gitsha(gitsha)`
+
+Given a valid `gitsha`, return the shortest unambiguous prefix of the `gitsha`.
+"""
 function short_gitsha(gitsha::AbstractString)
     repo = get_julia_repo()
 
@@ -76,26 +110,37 @@ function verify_gitsha(cmd::JLBuildCommand; auto_update::Bool = true)
     return verify_gitsha(cmd.gitsha; auto_update=auto_update)
 end
 
-function verify_gitsha(gitsha::AbstractString; auto_update::Bool = true)
-    # First, open the repo (or create if it doesn't already exist)
-    repo = get_julia_repo()
+"""
+`verify_gitsha(obj; auto_update = true)`
 
-    if !LibGit2.iscommit(gitsha, repo)
-        # If at first we didn't find this as a commit, try updating if we allow
-        # it.  (By default true, disable for testing and other such purposes)
-        if auto_update
-            update_julia_repo()
-            return LibGit2.iscommit(gitsha, repo)
-        end
+Given a git object `obj`, verify that it is valid.
+"""
+function verify_gitsha(obj::AbstractString; auto_update::Bool = true)
+    try
+        get_git_commit(obj)
 
-        # auto_update was disabled, and we didn't find it the first time
-        return false
+        # we found it, yay!
+        return true
     end
 
-    # we found it, yay!
-    return true
+    # If at first we didn't find this as a commit, try updating if we allow
+    # it.  (By default true, disable for testing and other such purposes)
+    if auto_update
+        update_julia_repo()
+        return verify_gitsha(obj; auto_update = false)
+    end
+
+    # auto_update was disabled, and we didn't find it the first time
+    return false
 end
 
+"""
+`verify_sender(event)`
+
+Given a GitHub `event`, check to see that the instigating user has "JuliaLang"
+priviliges and is not `"jlbuild"`, as we don't want to respond to our own
+comments/messages.
+"""
 function verify_sender(event)
     username = get(event.sender.login)
     if username == "jlbuild"
@@ -111,6 +156,12 @@ function verify_sender(event)
     return true
 end
 
+"""
+`get_event_type(event)`
+
+Given a GitHub `event`, return the type of the event such as pull request,
+issue, issue comment, etc...
+"""
 function get_event_type(event::GitHub.WebhookEvent)
     if event.kind == "commit_comment"
         return :commit
@@ -126,6 +177,11 @@ function get_event_type(event::GitHub.WebhookEvent)
     return :unknown
 end
 
+"""
+`get_event_sha(event)`
+
+Given a GitHub `event`, return the gitsha of the event.
+"""
 function get_event_sha(event::GitHub.WebhookEvent)
     global github_auth
     try
@@ -143,6 +199,12 @@ function get_event_sha(event::GitHub.WebhookEvent)
     return ""
 end
 
+"""
+`get_event_place(event)`
+
+Given a GitHub `event`, return the "place" of the event, such as the PR number,
+issue number, etc...
+"""
 function get_event_place(event::GitHub.WebhookEvent)
     try
         return event.payload["pull_request"]["number"]
@@ -155,6 +217,11 @@ function get_event_place(event::GitHub.WebhookEvent)
     end
 end
 
+"""
+`get_event_body(event)`
+
+Given a GitHub `event`, return the body of the comment/issue/pr, etc...
+"""
 function get_event_body(event::GitHub.WebhookEvent)
     try
         return event.payload["comment"]["body"]
@@ -169,6 +236,12 @@ function get_event_body(event::GitHub.WebhookEvent)
     return ""
 end
 
+"""
+`parse_commands(event)`
+
+Given a GitHub `event`, analyze its content and metadata to extract all given
+commands, inferring commit to build if none is given.
+"""
 function parse_commands(event::GitHub.WebhookEvent)
     # Grab the gitsha that this PR/review/whatever defaults to
     default_commit = get_event_sha(event)
@@ -182,18 +255,25 @@ function parse_commands(event::GitHub.WebhookEvent)
     return cmds
 end
 
+"""
+`parse_commands(body; default_commit="")`
+
+Given a comment `body` and an optional `default_commit`, extract all `@jlbuild`
+commands and return them as `JLBuildCommand` objects.
+"""
 function parse_commands(body::AbstractString; default_commit="")
     commands = JLBuildCommand[]
 
     # Build regex to find commands embedded in a comment body
     regex = ""
 
-    # Start by finding a line that starts with `@jlbuild`, maybe with whitespace
+    # Start by finding a line that starts with `@jlbuild`
     regex *= "^\\s*\\@jlbuild"
 
-    # Build a capture group to find a gitsha immediately after `@jlbuild`. The
-    # gitsha can be enclosed within backticks, and the whole thing is optional.
-    regex *= "(?:[ \\t]+`?([0-9a-fA-F]+)`?)?"
+    # Build a capture group to find a gitsha or tag immediately after
+    # `@jlbuild`. The gitsha can be enclosed within backticks, and the whole
+    # thing is optional.
+    regex *= "(?:[ \\t]+`?([0-9a-zA-Z\./]+)`?)?"
 
     # Build a group to find all tags that start with `!`
     regex *= "((?:[ \\t]+![^\\s]+)*)"
