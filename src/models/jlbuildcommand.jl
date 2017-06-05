@@ -1,6 +1,6 @@
 import Base: ==
 
-immutable JLBuildCommand
+type JLBuildCommand
     gitsha::String
     code::String
     submitted::Bool
