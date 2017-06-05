@@ -19,6 +19,11 @@ runshell:
 shell:
 	docker-compose exec app julia -L shell.jl
 
+test:
+	docker-compose exec app julia --color=yes test/runtests.jl
+
 log: logs
 logs:
 	docker-compose logs -f
+
+.PHONY: test
