@@ -11,8 +11,8 @@ for idx in 1:length(suffixes)
 end
 
 # First, test that we are able to probe gitshas properly
-test_gitsha = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
-v052_gitsha = "f4c6c9d4bbbd9587d84494e314f692c15ff1f9c0"
+test_gitsha    = "a9cbc036ac62dc5ba5200416ca7b40a2f9aa59ea"
+v060rc2_gitsha = "68e911be534f84f6201cbdd5d92ef0757af1238a"
 short_gitsha = test_gitsha[1:10]
 @testset "gitsha verify" begin
     # Ensure a full gitsha works
@@ -37,7 +37,7 @@ end
 @testset "gitsha normalize" begin
     @test normalize_gitsha(test_gitsha) == test_gitsha
     @test normalize_gitsha(short_gitsha) == test_gitsha
-    @test normalize_gitsha("v0.5.2") == v052_gitsha
+    @test normalize_gitsha("v0.6.0-rc2") == v060rc2_gitsha
     @test_throws LibGit2.Error.GitError normalize_gitsha(test_gitsha[1:3])
 end
 
@@ -64,7 +64,7 @@ and then I will say another one:
 and then I will have a real one, both quoted and unquoted and short
 @jlbuild $test_gitsha
 @jlbuild `$short_gitsha`
-@jlbuild `v0.5.2`
+@jlbuild `v0.6.0-rc2`
 And a real one that is split
 @jlbuild
 78f3c82f92a3259f2372543ab8a7c4252fa2999f
@@ -74,7 +74,7 @@ long_gitshas = [
     "6a7b8c9d",
     test_gitsha,
     short_gitsha,
-    "v0.5.2",
+    "v0.6.0-rc2",
 ]
 
 # Test stuff for commands
@@ -109,9 +109,9 @@ $cmd_code
     @test parse_commands("@jlbuild $test_gitsha")[1].gitsha == test_gitsha
     @test parse_commands("@jlbuild \t $test_gitsha\n")[1].gitsha == test_gitsha
     @test parse_commands("@jlbuild `$test_gitsha`")[1].gitsha == test_gitsha
-    v052 = parse_commands("@jlbuild `v0.5.2`")[1]
-    @test v052.gitsha == "v0.5.2"
-    @test normalize_gitsha(v052.gitsha) == v052_gitsha
+    v060rc2 = parse_commands("@jlbuild `v0.6.0-rc2`")[1]
+    @test v060rc2.gitsha == "v0.6.0-rc2"
+    @test normalize_gitsha(v060rc2.gitsha) == v060rc2_gitsha
 
     # Test multiline parsing works, but not with something else preceeding the
     # command on the same line.
