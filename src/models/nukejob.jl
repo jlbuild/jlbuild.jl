@@ -1,4 +1,4 @@
-immutable NukeJob
+type NukeJob
     # Linkage to JLBC
     gitsha::String
     comment_id::Int64

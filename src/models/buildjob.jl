@@ -1,4 +1,4 @@
-immutable BuildJob
+type BuildJob
     # Linkage to JLBC
     gitsha::String
     comment_id::Int64
