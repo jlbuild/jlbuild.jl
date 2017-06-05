@@ -8,7 +8,7 @@ RUN mkdir -p /app/deps
 RUN julia -e 'LibGit2.clone("https://github.com/JuliaLang/julia.git", "deps/julia", isbare=true)'
 
 # Install packages
-RUN julia -e 'for pkg in ["Compat", "HTTP", "GitHub", "MySQL", "TimeZones"]; Pkg.add(pkg); end; Pkg.build();'
+RUN julia -e 'for pkg in ["Compat", "HTTP", "GitHub", "MySQL", "TimeZones"]; Pkg.add(pkg); end; Pkg.checkout("MySQL"); Pkg.build();'
 
 COPY src /app/src
 COPY test /app/test
