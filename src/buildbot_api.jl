@@ -9,7 +9,7 @@ function showerror(io::IO, e::BuildbotLoginError)
     print(io, "Access denied from $buildbot_base/auth/login")
 end
 
-type HTTPError <: Exception
+immutable HTTPError <: Exception
     method::String
     url::String
     code::Int64
@@ -106,11 +106,23 @@ for (name, scheduler_name, name_prefix, job_type) in [
     end
 end
 
+"""
+`builder_suffix(list, builder_id)`
+
+Given a `list` of builders, return the suffix of the name of the given
+`builder_id`, for example, `linux64`.
+"""
 function builder_suffix(list, builder_id)
     name = list[builder_id]
     return name[rsearch(name, '_')+1:end]
 end
 
+"""
+`matching_builder(new_list, old_list, old_builder_id)`
+
+Given the builder id `old_builder_id` contained within the list `old_list`,
+find the builder with a matching suffix within `new_list`.
+"""
 function matching_builder(new_list, old_list, old_builder_id)
     name_suffix = builder_suffix(old_list, old_builder_id)
     return first(k for (k,v) in new_list if endswith(v, name_suffix))
@@ -217,6 +229,12 @@ function response_buildrequest_id(res, builder_id)
     return first(results[2])[2]
 end
 
+"""
+`submit_nuke!(gitsha, comment_id, builder_id)`
+
+Submit a new `NukeJob` from the three necessary pieces of information. Returns
+the newly created `NukeJob`.
+"""
 function submit_nuke!(gitsha, comment_id, builder_id)
     global forcenuke_url
     data = JSON.json(Dict(
@@ -239,6 +257,8 @@ function submit_nuke!(gitsha, comment_id, builder_id)
     )
     dbsave(nuke_job)
     log("Initiated Nuke on $(builder_name(nuke_job))")
+
+    return nuke_job
 end
 
 function submit_build!(gitsha, extra_make_flags, comment_id, builder_id)

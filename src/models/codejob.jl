@@ -1,4 +1,4 @@
-type CodeJob
+immutable CodeJob
     # Linkage to JLBC
     gitsha::String
     comment_id::Int64
@@ -13,6 +13,15 @@ end
 function CodeJob(;gitsha="", comment_id=0, builder_id=0, buildrequest_id=0,
                   code="", done=false)
     return CodeJob(gitsha, comment_id, builder_id, buildrequest_id, code, done)
+end
+
+function show(io::IO, x::CodeJob)
+    sha = short_gitsha(x.gitsha)
+    code = x.code
+    if length(code) > 20
+        code = "$(code[1:17])..."
+    end
+    show(io, "CodeJob($sha, $(builder_name(x)), $(x.buildrequest_id), \"$code\")")
 end
 
 function create_schema(::Type{CodeJob})

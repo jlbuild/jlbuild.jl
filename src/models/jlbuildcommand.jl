@@ -1,6 +1,6 @@
 import Base: ==
 
-type JLBuildCommand
+immutable JLBuildCommand
     gitsha::String
     code::String
     submitted::Bool
@@ -28,6 +28,15 @@ function JLBuildCommand(;gitsha="", code="", submitted = false, repo_name = "",
                           comment_place, comment_type, comment_url,
                           builder_filter, extra_make_flags, should_nuke,
                           force_rebuild)
+end
+
+function show(io::IO, x::JLBuildCommand)
+    sha = short_gitsha(x.gitsha)
+    code = x.code
+    if length(code) > 15
+        code = "$(code[1:12])..."
+    end
+    show(io, "JLBuildCommand($sha, \"$code\", $(x.comment_url))")
 end
 
 # Schema for a JLBuildCommand.  Just gitsha and code

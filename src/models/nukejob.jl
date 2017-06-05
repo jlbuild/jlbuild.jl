@@ -1,4 +1,4 @@
-type NukeJob
+immutable NukeJob
     # Linkage to JLBC
     gitsha::String
     comment_id::Int64
@@ -11,6 +11,11 @@ end
 function NukeJob(;gitsha="", comment_id=0, builder_id=0, buildrequest_id=0,
                   done=false)
     return NukeJob(gitsha, comment_id, builder_id, buildrequest_id, done)
+end
+
+function show(io::IO, x::NukeJob)
+    sha = short_gitsha(x.gitsha)
+    show(io, "NukeJob($sha, $(builder_name(x)), $(x.buildrequest_id))")
 end
 
 function create_schema(::Type{NukeJob})

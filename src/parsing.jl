@@ -41,7 +41,9 @@ end
 function short_gitsha(gitsha::AbstractString)
     repo = get_julia_repo()
 
-    # Wow this is so hacky
+    # Wow this is so hacky.  We depend on the functionality that LibGit2.get()
+    # fails out if the given gitsha is ambiguous, so we probe lengths starting
+    # at a length of 7 up to the full gitsha length
     for len in 7:length(gitsha)
         try
             LibGit2.get(LibGit2.GitCommit, repo, gitsha)
@@ -50,6 +52,12 @@ function short_gitsha(gitsha::AbstractString)
     end
 end
 
+"""
+`get_julia_majmin(gitsha)`
+
+Given a `gitsha`, read the `VERSION` file in the root of the Julia repsitory
+at that `gitsha`, returning the major and minor versions as a string.
+"""
 function get_julia_majmin(gitsha::AbstractString)
     # <3 @simonbyrne is the best <3
     repo = get_julia_repo()
@@ -59,6 +67,11 @@ function get_julia_majmin(gitsha::AbstractString)
     return "$(v.major).$(v.minor)"
 end
 
+"""
+`verify_gitsha(cmd; auto_update = true)`
+
+Given a JLBuildCommand `cmd`, verify that the gitsha within `cmd` is valid.
+"""
 function verify_gitsha(cmd::JLBuildCommand; auto_update::Bool = true)
     return verify_gitsha(cmd.gitsha; auto_update=auto_update)
 end

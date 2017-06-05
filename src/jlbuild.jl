@@ -1,7 +1,8 @@
 __precompile__()
 module jlbuild
+import Base: show
 import GitHub
-using HTTP, JSON
+using HTTP, JSON, Compat
 export run_server, JLBuildCommand, NukeJob, BuildJob, CodeJob, binaryrecord,
        dbload, dbsave, verify_gitsha, parse_commands, normalize_gitsha,
        builder_filter, builder_name, builder_suffixes, get_status,

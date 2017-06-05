@@ -1,4 +1,4 @@
-type BuildJob
+immutable BuildJob
     # Linkage to JLBC
     gitsha::String
     comment_id::Int64
@@ -14,6 +14,13 @@ function BuildJob(;gitsha="", comment_id=0, builder_id = 0, buildrequest_id = 0,
     # Construct the object
     return BuildJob(gitsha, comment_id, builder_id, buildrequest_id, done)
 end
+
+function show(io::IO, x::BuildJob)
+    sha = short_gitsha(x.gitsha)
+    show(io, "BuildJob($sha, $(builder_name(x)), $(x.buildrequest_id))")
+end
+
+
 
 function create_schema(::Type{BuildJob})
     return """

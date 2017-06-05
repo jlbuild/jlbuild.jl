@@ -1,4 +1,4 @@
-FROM julia
+FROM staticfloat/julia:v0.5-x64
 
 WORKDIR /app
 
@@ -7,9 +7,8 @@ RUN apt update && apt install -y unzip build-essential libmysqlclient-dev git
 RUN mkdir -p /app/deps
 RUN julia -e 'LibGit2.clone("https://github.com/JuliaLang/julia.git", "deps/julia", isbare=true)'
 
-# Make sure we track HTTP.jl closely
-ADD https://api.github.com/repos/JuliaWeb/HTTP.jl/git/refs/heads/master /HTTP.jl.json
-RUN julia -e 'Pkg.clone("HTTP"); Pkg.add("GitHub"); Pkg.clone("MySQL"); Pkg.add("TimeZones"); Pkg.build();'
+# Install packages
+RUN julia -e 'for pkg in ["Compat", "HTTP", "GitHub", "MySQL", "TimeZones"]; Pkg.add(pkg); end; Pkg.build();'
 
 COPY src /app/src
 COPY test /app/test
