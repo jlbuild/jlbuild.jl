@@ -74,8 +74,9 @@ function run_eventloop()
             # Update the comments for all JLBuildCommand's whose jobs have had
             # activity.  We do this down here so that we don't waste time and
             # rate limited resources updating the comment of a JLBC twice.
-            log("Updating comment for $(cmd_ref)")
-            update_comment(dbload(JLBuildCommand; cmd_ref...)[1])
+            cmd = dbload(JLBuildCommand; cmd_ref...)[1]
+            log("Updating comment for $(cmd)")
+            update_comment(cmd)
         end
 
         # Sleep a bit each iteration, so we're not a huge CPU/network hog
