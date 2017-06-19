@@ -135,6 +135,17 @@ function verify_gitsha(obj::AbstractString; auto_update::Bool = true)
 end
 
 """
+`verify_event_type(event)`
+
+Given a GitHub `event`, check to see that the event we're sourcing from is
+actually an event we want to deal with, if it's not (e.g. it's `:unknown`)
+then return false.
+"""
+function verify_event_type(event)
+    return get_event_type(event) != :unknown
+end
+
+"""
 `verify_sender(event)`
 
 Given a GitHub `event`, check to see that the instigating user has "JuliaLang"
@@ -163,6 +174,9 @@ Given a GitHub `event`, return the type of the event such as pull request,
 issue, issue comment, etc...
 """
 function get_event_type(event::GitHub.WebhookEvent)
+    # Explicitly ignore things that look like someone opening a PR but aren't
+    const bad_actions = ["labeled"]
+
     if event.kind == "commit_comment"
         return :commit
     elseif event.kind == "pull_request_review_comment"
@@ -171,7 +185,7 @@ function get_event_type(event::GitHub.WebhookEvent)
         return :pr
     elseif event.kind == "issue_comment"
         return :pr
-    elseif event.kind == "issues"
+    elseif event.kind == "issues" && !(event.payload["action"] in bad_actions)
         return :pr
     end
     return :unknown
