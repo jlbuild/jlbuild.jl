@@ -135,6 +135,21 @@ function verify_gitsha(obj::AbstractString; auto_update::Bool = true)
 end
 
 """
+`verify_action_type(event)`
+
+Given a GitHub `event`, check to see that the event we're sourcing from is
+actually an action we want to deal with, e.g. opening an issue rather than
+updating its labels, etc...
+"""
+function verify_action_type(event)
+    # Certain event kinds are overloaded, we want to pay attention
+    # to only certain actions, so gate those here.
+    const actions = ["created", "opened", "edited"]
+    
+    return event.payload["action"] in actions
+end
+
+"""
 `verify_sender(event)`
 
 Given a GitHub `event`, check to see that the instigating user has "JuliaLang"

@@ -233,6 +233,11 @@ function github_callback(event::GitHub.WebhookEvent)
     # debugging
     global event_, github_auth
 
+    # verify this is a comment we're interested in
+    if !verify_action_type(event)
+        return HttpCommon.Response(202, "ignored event type")
+    end
+
     # verify we should be listening to this comment at all
     if !verify_sender(event)
         return HttpCommon.Response(202, "bad sender")
