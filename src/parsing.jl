@@ -144,7 +144,7 @@ updating its labels, etc...
 function verify_action_type(event)
     # Certain event kinds are overloaded, we want to pay attention
     # to only certain actions, so gate those here.
-    const actions = ["created", "opened", "edited"]
+    const actions = ["created", "opened"]
     
     return event.payload["action"] in actions
 end
